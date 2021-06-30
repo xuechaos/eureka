@@ -62,7 +62,7 @@ import javax.inject.Singleton;
  *
  * <p>
  * This binding mechanism gravitates towards one eureka server per zone for
- * resilience.Atleast one elastic ip should be slotted for each eureka server in
+ * resilience. At least one elastic ip should be slotted for each eureka server in
  * a zone. If more than eureka server is launched per zone and there are not
  * enough elastic ips slotted, the server tries to pick a free EIP slotted for other
  * zones and if it still cannot find a free EIP, waits and keeps trying.
@@ -101,12 +101,16 @@ public class EIPManager implements AwsBinder {
     }
 
     @PostConstruct
-    public void start() throws Exception {
-        handleEIPBinding();
+    public void start() {
+        try {
+            handleEIPBinding();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @PreDestroy
-    public void shutdown() throws Exception {
+    public void shutdown() {
         timer.cancel();
         for (int i = 0; i < serverConfig.getEIPBindRebindRetries(); i++) {
             try {
@@ -114,7 +118,11 @@ public class EIPManager implements AwsBinder {
                 break;
             } catch (Exception e) {
                 logger.warn("Cannot unbind the EIP from the instance");
-                Thread.sleep(1000);
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e1) {
+                    throw new RuntimeException(e1);
+                }
             }
         }
     }
@@ -335,24 +343,27 @@ public class EIPManager implements AwsBinder {
      * @return collection of EIPs.
      */
     private Collection<String> getEIPsFromServiceUrls(List<String> ec2Urls) {
-        List<String> returnedUrls = new ArrayList<String>();
+        List<String> returnedUrls = new ArrayList<>();
         String region = clientConfig.getRegion();
         String regionPhrase = "";
         if (!US_EAST_1.equals(region)) {
             regionPhrase = "." + region;
         }
         for (String cname : ec2Urls) {
-            int beginIndex = cname.indexOf("ec2-") + 4;
+            int beginIndex = cname.indexOf("ec2-");
 
-            // Handle case where there are no cnames containing "ec2-"
-            // Reasons include:
-            //  Systems without public addresses - purely attached to corp lan via AWS Direct Connect
             if (-1 < beginIndex) {
+                // CNAME contains "ec2-"
                 int endIndex = cname.indexOf(regionPhrase + ".compute");
-                String eipStr = cname.substring(beginIndex, endIndex);
+                String eipStr = cname.substring(beginIndex + 4, endIndex);
                 String eip = eipStr.replaceAll("\\-", ".");
                 returnedUrls.add(eip);
             }
+            
+            // Otherwise, if CNAME doesn't contain, do nothing.
+            // Handle case where there are no cnames containing "ec2-". Reasons include:
+            //  Systems without public addresses - purely attached to corp lan via AWS Direct Connect
+            //  Use of EC2 network adapters that are attached to an instance after startup
         }
         return returnedUrls;
     }

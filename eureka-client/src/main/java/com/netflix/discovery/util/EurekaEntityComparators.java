@@ -43,8 +43,7 @@ public final class EurekaEntityComparators {
         if (first == null || first == null && second != null) {
             return false;
         }
-
-        return first.getMetadata().equals(second.getMetadata());
+        return equal(first.getMetadata(), second.getMetadata());
     }
 
     public static boolean subsetOf(DataCenterInfo first, DataCenterInfo second) {
@@ -174,6 +173,9 @@ public final class EurekaEntityComparators {
             return false;
         }
         if (first.getStatus() != null ? !first.getStatus().equals(second.getStatus()) : second.getStatus() != null) {
+            return false;
+        }
+        if (first.getOverriddenStatus() != null ? !first.getOverriddenStatus().equals(second.getOverriddenStatus()) : second.getOverriddenStatus() != null) {
             return false;
         }
         if (first.getStatusPageUrl() != null ? !first.getStatusPageUrl().equals(second.getStatusPageUrl()) : second.getStatusPageUrl() != null) {

@@ -175,6 +175,7 @@ public class EurekaCodecCompatibilityTest {
             @Override
             public void call(EncoderWrapper encodingCodec, DecoderWrapper decodingCodec) throws IOException {
                 String encodedString = encodingCodec.encode(instanceInfo);
+
                 InstanceInfo decodedValue = decodingCodec.decode(encodedString, InstanceInfo.class);
                 assertThat(EurekaEntityComparators.equal(instanceInfo, decodedValue), is(true));
                 assertThat(EurekaEntityComparators.equal(instanceInfo, decodedValue, new EurekaEntityComparators.RawIdEqualFunc()), is(true));
@@ -183,6 +184,53 @@ public class EurekaCodecCompatibilityTest {
 
         verifyAllPairs(codingAction, InstanceInfo.class, availableJsonWrappers);
         verifyAllPairs(codingAction, InstanceInfo.class, availableXmlWrappers);
+    }
+
+    // https://github.com/Netflix/eureka/issues/1051
+    // test going from camel case to lower case
+    @Test
+    public void testInstanceInfoEncodeDecodeCompatibilityDueToOverriddenStatusRenamingV1() throws Exception {
+        final InstanceInfo instanceInfo = infoIterator.next();
+        new InstanceInfo.Builder(instanceInfo).setOverriddenStatus(InstanceInfo.InstanceStatus.OUT_OF_SERVICE);
+
+        Action2 codingAction = new Action2() {
+            @Override
+            public void call(EncoderWrapper encodingCodec, DecoderWrapper decodingCodec) throws IOException {
+                String encodedString = encodingCodec.encode(instanceInfo);
+                // sed to older naming to test
+                encodedString = encodedString.replace("overriddenStatus", "overriddenstatus");
+
+                InstanceInfo decodedValue = decodingCodec.decode(encodedString, InstanceInfo.class);
+                assertThat(EurekaEntityComparators.equal(instanceInfo, decodedValue), is(true));
+                assertThat(EurekaEntityComparators.equal(instanceInfo, decodedValue, new EurekaEntityComparators.RawIdEqualFunc()), is(true));
+            }
+        };
+
+        verifyAllPairs(codingAction, Application.class, availableJsonWrappers);
+        verifyAllPairs(codingAction, Application.class, availableXmlWrappers);
+    }
+
+    // same as the above, but go from lower case to camel case
+    @Test
+    public void testInstanceInfoEncodeDecodeCompatibilityDueToOverriddenStatusRenamingV2() throws Exception {
+        final InstanceInfo instanceInfo = infoIterator.next();
+        new InstanceInfo.Builder(instanceInfo).setOverriddenStatus(InstanceInfo.InstanceStatus.OUT_OF_SERVICE);
+
+        Action2 codingAction = new Action2() {
+            @Override
+            public void call(EncoderWrapper encodingCodec, DecoderWrapper decodingCodec) throws IOException {
+                String encodedString = encodingCodec.encode(instanceInfo);
+                // sed to older naming to test
+                encodedString = encodedString.replace("overriddenstatus", "overriddenStatus");
+
+                InstanceInfo decodedValue = decodingCodec.decode(encodedString, InstanceInfo.class);
+                assertThat(EurekaEntityComparators.equal(instanceInfo, decodedValue), is(true));
+                assertThat(EurekaEntityComparators.equal(instanceInfo, decodedValue, new EurekaEntityComparators.RawIdEqualFunc()), is(true));
+            }
+        };
+
+        verifyAllPairs(codingAction, Application.class, availableJsonWrappers);
+        verifyAllPairs(codingAction, Application.class, availableXmlWrappers);
     }
 
     @Test

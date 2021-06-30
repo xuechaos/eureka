@@ -119,6 +119,10 @@ public class EurekaArchaius2ClientConfig implements EurekaClientConfig {
         return prefixedConfig.getBoolean(REGISTRATION_ENABLED_KEY, true);
     }
 
+    public boolean shouldUnregisterOnShutdown() {
+        return prefixedConfig.getBoolean(SHOULD_UNREGISTER_ON_SHUTDOWN_KEY, true);
+    }
+
     public boolean shouldPreferSameZoneEureka() {
         return prefixedConfig.getBoolean(SHOULD_PREFER_SAME_ZONE_SERVER_KEY, true);
     }
@@ -173,6 +177,10 @@ public class EurekaArchaius2ClientConfig implements EurekaClientConfig {
         return prefixedConfig.getBoolean(FETCH_REGISTRY_ENABLED_KEY, true);
     }
 
+    public boolean shouldEnforceFetchRegistryAtInit() {
+        return prefixedConfig.getBoolean(SHOULD_ENFORCE_FETCH_REGISTRY_AT_INIT_KEY, false);
+    }
+
     public String getRegistryRefreshSingleVipAddress() {
         return prefixedConfig.getString(FETCH_SINGLE_VIP_ONLY_KEY, null);
     }
@@ -203,6 +211,10 @@ public class EurekaArchaius2ClientConfig implements EurekaClientConfig {
 
     public boolean shouldOnDemandUpdateStatusChange() {
         return prefixedConfig.getBoolean(SHOULD_ONDEMAND_UPDATE_STATUS_KEY, true);
+    }
+
+    public boolean shouldEnforceRegistrationAtInit() {
+        return prefixedConfig.getBoolean(SHOULD_ENFORCE_REGISTRATION_AT_INIT, false);
     }
 
     @Override

@@ -118,7 +118,7 @@ public class InstanceResource {
         }
         // Check if we need to sync based on dirty time stamp, the client
         // instance might have changed some value
-        Response response = null;
+        Response response;
         if (lastDirtyTimestamp != null && serverConfig.shouldSyncWhenTimestampDiffers()) {
             response = this.validateDirtyTimestamp(Long.valueOf(lastDirtyTimestamp), isFromReplicaNode);
             // Store the overridden status since the validation found out the node that replicates wins
@@ -131,7 +131,7 @@ public class InstanceResource {
         } else {
             response = Response.ok().build();
         }
-        logger.debug("Found (Renew): {} - {}; reply status={}" + app.getName(), id, response.getStatus());
+        logger.debug("Found (Renew): {} - {}; reply status={}", app.getName(), id, response.getStatus());
         return response;
     }
 
@@ -171,12 +171,10 @@ public class InstanceResource {
                     "true".equals(isReplication));
 
             if (isSuccess) {
-                logger.info("Status updated: " + app.getName() + " - " + id
-                        + " - " + newStatus);
+                logger.info("Status updated: {} - {} - {}", app.getName(), id, newStatus);
                 return Response.ok().build();
             } else {
-                logger.warn("Unable to update status: " + app.getName() + " - "
-                        + id + " - " + newStatus);
+                logger.warn("Unable to update status: {} - {} - {}", app.getName(), id, newStatus);
                 return Response.serverError().build();
             }
         } catch (Throwable e) {
@@ -215,10 +213,10 @@ public class InstanceResource {
                     newStatus, lastDirtyTimestamp, "true".equals(isReplication));
 
             if (isSuccess) {
-                logger.info("Status override removed: " + app.getName() + " - " + id);
+                logger.info("Status override removed: {} - {}", app.getName(), id);
                 return Response.ok().build();
             } else {
-                logger.warn("Unable to remove status override: " + app.getName() + " - " + id);
+                logger.warn("Unable to remove status override: {} - {}", app.getName(), id);
                 return Response.serverError().build();
             }
         } catch (Throwable e) {
@@ -241,15 +239,15 @@ public class InstanceResource {
             InstanceInfo instanceInfo = registry.getInstanceByAppAndId(app.getName(), id);
             // ReplicationInstance information is not found, generate an error
             if (instanceInfo == null) {
-                logger.error("Cannot find instance while updating metadata for instance {}", id);
-                return Response.serverError().build();
+                logger.warn("Cannot find instance while updating metadata for instance {}/{}", app.getName(), id);
+                return Response.status(Status.NOT_FOUND).build();
             }
             MultivaluedMap<String, String> queryParams = uriInfo.getQueryParameters();
             Set<Entry<String, List<String>>> entrySet = queryParams.entrySet();
             Map<String, String> metadataMap = instanceInfo.getMetadata();
             // Metadata map is empty - create a new map
             if (Collections.emptyMap().getClass().equals(metadataMap.getClass())) {
-                metadataMap = new ConcurrentHashMap<String, String>();
+                metadataMap = new ConcurrentHashMap<>();
                 InstanceInfo.Builder builder = new InstanceInfo.Builder(instanceInfo);
                 builder.setMetadata(metadataMap);
                 instanceInfo = builder.build();
@@ -261,7 +259,7 @@ public class InstanceResource {
             registry.register(instanceInfo, false);
             return Response.ok().build();
         } catch (Throwable e) {
-            logger.error("Error updating metadata for instance " + id, e);
+            logger.error("Error updating metadata for instance {}", id, e);
             return Response.serverError().build();
         }
 
@@ -279,16 +277,22 @@ public class InstanceResource {
     @DELETE
     public Response cancelLease(
             @HeaderParam(PeerEurekaNode.HEADER_REPLICATION) String isReplication) {
-        boolean isSuccess = registry.cancel(app.getName(), id,
+        try {
+            boolean isSuccess = registry.cancel(app.getName(), id,
                 "true".equals(isReplication));
 
-        if (isSuccess) {
-            logger.debug("Found (Cancel): " + app.getName() + " - " + id);
-            return Response.ok().build();
-        } else {
-            logger.info("Not Found (Cancel): " + app.getName() + " - " + id);
-            return Response.status(Status.NOT_FOUND).build();
+            if (isSuccess) {
+                logger.debug("Found (Cancel): {} - {}", app.getName(), id);
+                return Response.ok().build();
+            } else {
+                logger.info("Not Found (Cancel): {} - {}", app.getName(), id);
+                return Response.status(Status.NOT_FOUND).build();
+            }
+        } catch (Throwable e) {
+            logger.error("Error (cancel): {} - {}", app.getName(), id, e);
+            return Response.serverError().build();
         }
+
     }
 
     private Response validateDirtyTimestamp(Long lastDirtyTimestamp,

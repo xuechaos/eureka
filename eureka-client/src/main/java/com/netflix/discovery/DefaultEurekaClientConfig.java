@@ -66,6 +66,7 @@ public class DefaultEurekaClientConfig implements EurekaClientConfig {
     @Deprecated
     public static final String DEFAULT_NAMESPACE = CommonConstants.DEFAULT_CONFIG_NAMESPACE + ".";
     public static final String DEFAULT_ZONE = "defaultZone";
+    public static final String URL_SEPARATOR = "\\s*,\\s*";
 
     private final String namespace;
     private final DynamicPropertyFactory configInstance;
@@ -283,13 +284,24 @@ public class DefaultEurekaClientConfig implements EurekaClientConfig {
      * (non-Javadoc)
      *
      * @see
-     * com.netflix.discovery.EurekaClientConfig#getDiscoveryRegistrationEnabled
-     * ()
+     * com.netflix.discovery.EurekaClientConfig#getDiscoveryRegistrationEnabled()
      */
     @Override
     public boolean shouldRegisterWithEureka() {
         return configInstance.getBooleanProperty(
                 namespace + REGISTRATION_ENABLED_KEY, true).get();
+    }
+
+    /*
+     * (non-Javadoc)
+     *
+     * @see
+     * com.netflix.discovery.EurekaClientConfig#shouldUnregisterOnShutdown()
+     */
+    @Override
+    public boolean shouldUnregisterOnShutdown() {
+        return configInstance.getBooleanProperty(
+              namespace + SHOULD_UNREGISTER_ON_SHUTDOWN_KEY, true).get();
     }
 
     /*
@@ -357,7 +369,7 @@ public class DefaultEurekaClientConfig implements EurekaClientConfig {
         return configInstance
                 .getStringProperty(
                         namespace + region + "." + CONFIG_AVAILABILITY_ZONE_PREFIX,
-                        DEFAULT_ZONE).get().split(",");
+                        DEFAULT_ZONE).get().split(URL_SEPARATOR);
     }
 
     /*
@@ -376,7 +388,7 @@ public class DefaultEurekaClientConfig implements EurekaClientConfig {
 
         }
         if (serviceUrls != null) {
-            return Arrays.asList(serviceUrls.split(","));
+            return Arrays.asList(serviceUrls.split(URL_SEPARATOR));
         }
 
         return new ArrayList<String>();
@@ -403,7 +415,7 @@ public class DefaultEurekaClientConfig implements EurekaClientConfig {
     @Override
     public int getEurekaConnectionIdleTimeoutSeconds() {
         return configInstance.getIntProperty(
-                namespace + EUREKA_SERVER_CONNECTION_IDLE_TIMEOUT_KEY, 30)
+                namespace + EUREKA_SERVER_CONNECTION_IDLE_TIMEOUT_KEY, 45)
                 .get();
     }
 
@@ -411,6 +423,12 @@ public class DefaultEurekaClientConfig implements EurekaClientConfig {
     public boolean shouldFetchRegistry() {
         return configInstance.getBooleanProperty(
                 namespace + FETCH_REGISTRY_ENABLED_KEY, true).get();
+    }
+
+    @Override
+    public boolean shouldEnforceFetchRegistryAtInit() {
+        return configInstance.getBooleanProperty(
+                namespace + SHOULD_ENFORCE_FETCH_REGISTRY_AT_INIT_KEY, false).get();
     }
 
     /*
@@ -474,6 +492,12 @@ public class DefaultEurekaClientConfig implements EurekaClientConfig {
     public boolean shouldOnDemandUpdateStatusChange() {
         return configInstance.getBooleanProperty(
                 namespace + SHOULD_ONDEMAND_UPDATE_STATUS_KEY, true).get();
+    }
+
+    @Override
+    public boolean shouldEnforceRegistrationAtInit() {
+        return configInstance.getBooleanProperty(
+                namespace + SHOULD_ENFORCE_REGISTRATION_AT_INIT, false).get();
     }
 
     @Override

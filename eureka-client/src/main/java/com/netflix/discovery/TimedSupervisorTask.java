@@ -25,11 +25,13 @@ import org.slf4j.LoggerFactory;
 public class TimedSupervisorTask extends TimerTask {
     private static final Logger logger = LoggerFactory.getLogger(TimedSupervisorTask.class);
 
+    private final Counter successCounter;
     private final Counter timeoutCounter;
     private final Counter rejectedCounter;
     private final Counter throwableCounter;
     private final LongGauge threadPoolLevelGauge;
 
+    private final String name;
     private final ScheduledExecutorService scheduler;
     private final ThreadPoolExecutor executor;
     private final long timeoutMillis;
@@ -40,6 +42,7 @@ public class TimedSupervisorTask extends TimerTask {
 
     public TimedSupervisorTask(String name, ScheduledExecutorService scheduler, ThreadPoolExecutor executor,
                                int timeout, TimeUnit timeUnit, int expBackOffBound, Runnable task) {
+        this.name = name;
         this.scheduler = scheduler;
         this.executor = executor;
         this.timeoutMillis = timeUnit.toMillis(timeout);
@@ -48,6 +51,7 @@ public class TimedSupervisorTask extends TimerTask {
         this.maxDelay = timeoutMillis * expBackOffBound;
 
         // Initialize the counters and register.
+        successCounter = Monitors.newCounter("success");
         timeoutCounter = Monitors.newCounter("timeouts");
         rejectedCounter = Monitors.newCounter("rejectedExecutions");
         throwableCounter = Monitors.newCounter("throwables");
@@ -55,16 +59,18 @@ public class TimedSupervisorTask extends TimerTask {
         Monitors.registerObject(name, this);
     }
 
+    @Override
     public void run() {
-        Future future = null;
+        Future<?> future = null;
         try {
             future = executor.submit(task);
             threadPoolLevelGauge.set((long) executor.getActiveCount());
             future.get(timeoutMillis, TimeUnit.MILLISECONDS);  // block until done or timeout
             delay.set(timeoutMillis);
             threadPoolLevelGauge.set((long) executor.getActiveCount());
+            successCounter.increment();
         } catch (TimeoutException e) {
-            logger.error("task supervisor timed out", e);
+            logger.warn("task supervisor timed out", e);
             timeoutCounter.increment();
 
             long currentDelay = delay.get();
@@ -75,7 +81,7 @@ public class TimedSupervisorTask extends TimerTask {
             if (executor.isShutdown() || scheduler.isShutdown()) {
                 logger.warn("task supervisor shutting down, reject the task", e);
             } else {
-                logger.error("task supervisor rejected the task", e);
+                logger.warn("task supervisor rejected the task", e);
             }
 
             rejectedCounter.increment();
@@ -83,7 +89,7 @@ public class TimedSupervisorTask extends TimerTask {
             if (executor.isShutdown() || scheduler.isShutdown()) {
                 logger.warn("task supervisor shutting down, can't accept the task");
             } else {
-                logger.error("task supervisor threw an exception", e);
+                logger.warn("task supervisor threw an exception", e);
             }
 
             throwableCounter.increment();
@@ -96,5 +102,11 @@ public class TimedSupervisorTask extends TimerTask {
                 scheduler.schedule(this, delay.get(), TimeUnit.MILLISECONDS);
             }
         }
+    }
+
+    @Override
+    public boolean cancel() {
+        Monitors.unregisterObject(name, this);
+        return super.cancel();
     }
 }

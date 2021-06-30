@@ -19,8 +19,8 @@ package com.netflix.eureka.registry;
 import javax.annotation.Nullable;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.AbstractQueue;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -31,6 +31,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
@@ -87,7 +88,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
     // CircularQueues here for debugging/statistics purposes only
     private final CircularQueue<Pair<Long, String>> recentRegisteredQueue;
     private final CircularQueue<Pair<Long, String>> recentCanceledQueue;
-    private ConcurrentLinkedQueue<RecentlyChangedItem> recentlyChangedQueue = new ConcurrentLinkedQueue<RecentlyChangedItem>();
+    private ConcurrentLinkedQueue<RecentlyChangedItem> recentlyChangedQueue = new ConcurrentLinkedQueue<>();
 
     private final ReentrantReadWriteLock readWriteLock = new ReentrantReadWriteLock();
     private final Lock read = readWriteLock.readLock();
@@ -98,11 +99,11 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
     private Timer evictionTimer = new Timer("Eureka-EvictionTimer", true);
     private final MeasuredRate renewsLastMin;
 
-    private final AtomicReference<EvictionTask> evictionTaskRef = new AtomicReference<EvictionTask>();
+    private final AtomicReference<EvictionTask> evictionTaskRef = new AtomicReference<>();
 
     protected String[] allKnownRemoteRegions = EMPTY_STR_ARRAY;
     protected volatile int numberOfRenewsPerMinThreshold;
-    protected volatile int expectedNumberOfRenewsPerMin;
+    protected volatile int expectedNumberOfClientsSendingRenews;
 
     protected final EurekaServerConfig serverConfig;
     protected final EurekaClientConfig clientConfig;
@@ -135,7 +136,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
     protected void initRemoteRegionRegistry() throws MalformedURLException {
         Map<String, String> remoteRegionUrlsWithName = serverConfig.getRemoteRegionUrlsWithName();
-        if (remoteRegionUrlsWithName != null) {
+        if (!remoteRegionUrlsWithName.isEmpty()) {
             allKnownRemoteRegions = new String[remoteRegionUrlsWithName.size()];
             int remoteRegionArrayIndex = 0;
             for (Map.Entry<String, String> remoteRegionUrlWithName : remoteRegionUrlsWithName.entrySet()) {
@@ -150,7 +151,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             }
         }
         logger.info("Finished initializing remote region registries. All known remote regions: {}",
-                Arrays.toString(allKnownRemoteRegions));
+                (Object) allKnownRemoteRegions);
     }
 
     @Override
@@ -190,8 +191,8 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      * @see com.netflix.eureka.lease.LeaseManager#register(java.lang.Object, int, boolean)
      */
     public void register(InstanceInfo registrant, int leaseDuration, boolean isReplication) {
+        read.lock();
         try {
-            read.lock();
             Map<String, Lease<InstanceInfo>> gMap = registry.get(registrant.getAppName());
             REGISTER.increment(isReplication);
             if (gMap == null) {
@@ -207,6 +208,9 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 Long existingLastDirtyTimestamp = existingLease.getHolder().getLastDirtyTimestamp();
                 Long registrationLastDirtyTimestamp = registrant.getLastDirtyTimestamp();
                 logger.debug("Existing lease found (existing={}, provided={}", existingLastDirtyTimestamp, registrationLastDirtyTimestamp);
+
+                // this is a > instead of a >= because if the timestamps are equal, we still take the remote transmitted
+                // InstanceInfo instead of the server local copy.
                 if (existingLastDirtyTimestamp > registrationLastDirtyTimestamp) {
                     logger.warn("There is an existing lease and the existing lease's dirty timestamp {} is greater" +
                             " than the one that is being registered {}", existingLastDirtyTimestamp, registrationLastDirtyTimestamp);
@@ -216,27 +220,22 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             } else {
                 // The lease does not exist and hence it is a new registration
                 synchronized (lock) {
-                    if (this.expectedNumberOfRenewsPerMin > 0) {
-                        // Since the client wants to cancel it, reduce the threshold
-                        // (1
-                        // for 30 seconds, 2 for a minute)
-                        this.expectedNumberOfRenewsPerMin = this.expectedNumberOfRenewsPerMin + 2;
-                        this.numberOfRenewsPerMinThreshold =
-                                (int) (this.expectedNumberOfRenewsPerMin * serverConfig.getRenewalPercentThreshold());
+                    if (this.expectedNumberOfClientsSendingRenews > 0) {
+                        // Since the client wants to register it, increase the number of clients sending renews
+                        this.expectedNumberOfClientsSendingRenews = this.expectedNumberOfClientsSendingRenews + 1;
+                        updateRenewsPerMinThreshold();
                     }
                 }
                 logger.debug("No previous lease information found; it is new registration");
             }
-            Lease<InstanceInfo> lease = new Lease<InstanceInfo>(registrant, leaseDuration);
+            Lease<InstanceInfo> lease = new Lease<>(registrant, leaseDuration);
             if (existingLease != null) {
                 lease.setServiceUpTimestamp(existingLease.getServiceUpTimestamp());
             }
             gMap.put(registrant.getId(), lease);
-            synchronized (recentRegisteredQueue) {
-                recentRegisteredQueue.add(new Pair<Long, String>(
-                        System.currentTimeMillis(),
-                        registrant.getAppName() + "(" + registrant.getId() + ")"));
-            }
+            recentRegisteredQueue.add(new Pair<Long, String>(
+                    System.currentTimeMillis(),
+                    registrant.getAppName() + "(" + registrant.getId() + ")"));
             // This is where the initial state transfer of overridden status happens
             if (!InstanceStatus.UNKNOWN.equals(registrant.getOverriddenStatus())) {
                 logger.debug("Found overridden status {} for instance {}. Checking to see if needs to be add to the "
@@ -296,17 +295,15 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      * in the remote peers as valid cancellations, so self preservation mode would not kick-in.
      */
     protected boolean internalCancel(String appName, String id, boolean isReplication) {
+        read.lock();
         try {
-            read.lock();
             CANCEL.increment(isReplication);
             Map<String, Lease<InstanceInfo>> gMap = registry.get(appName);
             Lease<InstanceInfo> leaseToCancel = null;
             if (gMap != null) {
                 leaseToCancel = gMap.remove(id);
             }
-            synchronized (recentCanceledQueue) {
-                recentCanceledQueue.add(new Pair<Long, String>(System.currentTimeMillis(), appName + "(" + id + ")"));
-            }
+            recentCanceledQueue.add(new Pair<Long, String>(System.currentTimeMillis(), appName + "(" + id + ")"));
             InstanceStatus instanceStatus = overriddenInstanceStatusMap.remove(id);
             if (instanceStatus != null) {
                 logger.debug("Removed instance id {} from the overridden map which has value {}", id, instanceStatus.name());
@@ -329,11 +326,20 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 }
                 invalidateCache(appName, vip, svip);
                 logger.info("Cancelled instance {}/{} (replication={})", appName, id, isReplication);
-                return true;
             }
         } finally {
             read.unlock();
         }
+
+        synchronized (lock) {
+            if (this.expectedNumberOfClientsSendingRenews > 0) {
+                // Since the client wants to cancel it, reduce the number of clients to send renews.
+                this.expectedNumberOfClientsSendingRenews = this.expectedNumberOfClientsSendingRenews - 1;
+                updateRenewsPerMinThreshold();
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -366,15 +372,13 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                     return false;
                 }
                 if (!instanceInfo.getStatus().equals(overriddenInstanceStatus)) {
-                    Object[] args = {
-                            instanceInfo.getStatus().name(),
-                            instanceInfo.getOverriddenStatus().name(),
-                            instanceInfo.getId()
-                    };
                     logger.info(
                             "The instance status {} is different from overridden instance status {} for instance {}. "
-                                    + "Hence setting the status to overridden status", args);
-                    instanceInfo.setStatus(overriddenInstanceStatus);
+                                    + "Hence setting the status to overridden status", instanceInfo.getStatus().name(),
+                                    overriddenInstanceStatus.name(),
+                                    instanceInfo.getId());
+                    instanceInfo.setStatusWithoutDirty(overriddenInstanceStatus);
+
                 }
             }
             renewsLastMin.increment();
@@ -458,8 +462,8 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
     public boolean statusUpdate(String appName, String id,
                                 InstanceStatus newStatus, String lastDirtyTimestamp,
                                 boolean isReplication) {
+        read.lock();
         try {
-            read.lock();
             STATUS_UPDATE.increment(isReplication);
             Map<String, Lease<InstanceInfo>> gMap = registry.get(appName);
             Lease<InstanceInfo> lease = null;
@@ -481,22 +485,20 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                     if (InstanceStatus.UP.equals(newStatus)) {
                         lease.serviceUp();
                     }
-                    // This is NAC overriden status
+                    // This is NAC overridden status
                     overriddenInstanceStatusMap.put(id, newStatus);
                     // Set it for transfer of overridden status to replica on
                     // replica start up
                     info.setOverriddenStatus(newStatus);
                     long replicaDirtyTimestamp = 0;
+                    info.setStatusWithoutDirty(newStatus);
                     if (lastDirtyTimestamp != null) {
-                        replicaDirtyTimestamp = Long.valueOf(lastDirtyTimestamp);
+                        replicaDirtyTimestamp = Long.parseLong(lastDirtyTimestamp);
                     }
                     // If the replication's dirty timestamp is more than the existing one, just update
                     // it to the replica's.
                     if (replicaDirtyTimestamp > info.getLastDirtyTimestamp()) {
                         info.setLastDirtyTimestamp(replicaDirtyTimestamp);
-                        info.setStatusWithoutDirty(newStatus);
-                    } else {
-                        info.setStatus(newStatus);
                     }
                     info.setActionType(ActionType.MODIFIED);
                     recentlyChangedQueue.add(new RecentlyChangedItem(lease));
@@ -526,8 +528,8 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                                         InstanceStatus newStatus,
                                         String lastDirtyTimestamp,
                                         boolean isReplication) {
+        read.lock();
         try {
-            read.lock();
             STATUS_OVERRIDE_DELETE.increment(isReplication);
             Map<String, Lease<InstanceInfo>> gMap = registry.get(appName);
             Lease<InstanceInfo> lease = null;
@@ -549,10 +551,10 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 InstanceStatus currentOverride = overriddenInstanceStatusMap.remove(id);
                 if (currentOverride != null && info != null) {
                     info.setOverriddenStatus(InstanceStatus.UNKNOWN);
-                    info.setStatus(newStatus);
+                    info.setStatusWithoutDirty(newStatus);
                     long replicaDirtyTimestamp = 0;
                     if (lastDirtyTimestamp != null) {
-                        replicaDirtyTimestamp = Long.valueOf(lastDirtyTimestamp);
+                        replicaDirtyTimestamp = Long.parseLong(lastDirtyTimestamp);
                     }
                     // If the replication's dirty timestamp is more than the existing one, just update
                     // it to the replica's.
@@ -735,7 +737,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         boolean includeRemoteRegion = null != remoteRegions && remoteRegions.length != 0;
 
         logger.debug("Fetching applications registry with remote regions: {}, Regions argument {}",
-                includeRemoteRegion, Arrays.toString(remoteRegions));
+                includeRemoteRegion, remoteRegions);
 
         if (includeRemoteRegion) {
             GET_ALL_WITH_REMOTE_REGIONS_CACHE_MISS.increment();
@@ -872,20 +874,17 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         Applications apps = new Applications();
         apps.setVersion(responseCache.getVersionDelta().get());
         Map<String, Application> applicationInstancesMap = new HashMap<String, Application>();
+        write.lock();
         try {
-            write.lock();
             Iterator<RecentlyChangedItem> iter = this.recentlyChangedQueue.iterator();
-            logger.debug("The number of elements in the delta queue is :"
-                    + this.recentlyChangedQueue.size());
+            logger.debug("The number of elements in the delta queue is : {}",
+                    this.recentlyChangedQueue.size());
             while (iter.hasNext()) {
                 Lease<InstanceInfo> lease = iter.next().getLeaseInfo();
                 InstanceInfo instanceInfo = lease.getHolder();
-                Object[] args = {instanceInfo.getId(),
-                        instanceInfo.getStatus().name(),
-                        instanceInfo.getActionType().name()};
                 logger.debug(
-                        "The instance id %s is found with status %s and actiontype %s",
-                        args);
+                        "The instance id {} is found with status {} and actiontype {}",
+                        instanceInfo.getId(), instanceInfo.getStatus().name(), instanceInfo.getActionType().name());
                 Application app = applicationInstancesMap.get(instanceInfo
                         .getAppName());
                 if (app == null) {
@@ -893,7 +892,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                     applicationInstancesMap.put(instanceInfo.getAppName(), app);
                     apps.addApplication(app);
                 }
-                app.addInstance(decorateInstanceInfo(lease));
+                app.addInstance(new InstanceInfo(decorateInstanceInfo(lease)));
             }
 
             boolean disableTransparentFallback = serverConfig.disableTransparentFallbackToOtherRegion();
@@ -955,24 +954,22 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         Applications apps = new Applications();
         apps.setVersion(responseCache.getVersionDeltaWithRegions().get());
         Map<String, Application> applicationInstancesMap = new HashMap<String, Application>();
+        write.lock();
         try {
-            write.lock();
             Iterator<RecentlyChangedItem> iter = this.recentlyChangedQueue.iterator();
-            logger.debug("The number of elements in the delta queue is :" + this.recentlyChangedQueue.size());
+            logger.debug("The number of elements in the delta queue is :{}", this.recentlyChangedQueue.size());
             while (iter.hasNext()) {
                 Lease<InstanceInfo> lease = iter.next().getLeaseInfo();
                 InstanceInfo instanceInfo = lease.getHolder();
-                Object[] args = {instanceInfo.getId(),
-                        instanceInfo.getStatus().name(),
-                        instanceInfo.getActionType().name()};
-                logger.debug("The instance id %s is found with status %s and actiontype %s", args);
+                logger.debug("The instance id {} is found with status {} and actiontype {}",
+                        instanceInfo.getId(), instanceInfo.getStatus().name(), instanceInfo.getActionType().name());
                 Application app = applicationInstancesMap.get(instanceInfo.getAppName());
                 if (app == null) {
                     app = new Application(instanceInfo.getAppName());
                     applicationInstancesMap.put(instanceInfo.getAppName(), app);
                     apps.addApplication(app);
                 }
-                app.addInstance(decorateInstanceInfo(lease));
+                app.addInstance(new InstanceInfo(decorateInstanceInfo(lease)));
             }
 
             if (includeRemoteRegion) {
@@ -990,7 +987,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                                         apps.addApplication(appInstanceTillNow);
                                     }
                                     for (InstanceInfo instanceInfo : application.getInstances()) {
-                                        appInstanceTillNow.addInstance(instanceInfo);
+                                        appInstanceTillNow.addInstance(new InstanceInfo(instanceInfo));
                                     }
                                 }
                             }
@@ -1075,7 +1072,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      */
     @Deprecated
     public List<InstanceInfo> getInstancesById(String id, boolean includeRemoteRegions) {
-        List<InstanceInfo> list = new ArrayList<InstanceInfo>();
+        List<InstanceInfo> list = new ArrayList<>();
 
         for (Iterator<Entry<String, Map<String, Lease<InstanceInfo>>>> iter =
                      registry.entrySet().iterator(); iter.hasNext(); ) {
@@ -1089,7 +1086,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 }
 
                 if (list == Collections.EMPTY_LIST) {
-                    list = new ArrayList<InstanceInfo>();
+                    list = new ArrayList<>();
                 }
                 list.add(decorateInstanceInfo(lease));
             }
@@ -1166,13 +1163,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      */
     @Override
     public List<Pair<Long, String>> getLastNRegisteredInstances() {
-        List<Pair<Long, String>> list = new ArrayList<Pair<Long, String>>();
-
-        synchronized (recentRegisteredQueue) {
-            for (Pair<Long, String> aRecentRegisteredQueue : recentRegisteredQueue) {
-                list.add(aRecentRegisteredQueue);
-            }
-        }
+        List<Pair<Long, String>> list = new ArrayList<>(recentRegisteredQueue);
         Collections.reverse(list);
         return list;
     }
@@ -1184,12 +1175,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      */
     @Override
     public List<Pair<Long, String>> getLastNCanceledInstances() {
-        List<Pair<Long, String>> list = new ArrayList<Pair<Long, String>>();
-        synchronized (recentCanceledQueue) {
-            for (Pair<Long, String> aRecentCanceledQueue : recentCanceledQueue) {
-                list.add(aRecentCanceledQueue);
-            }
-        }
+        List<Pair<Long, String>> list = new ArrayList<>(recentCanceledQueue);
         Collections.reverse(list);
         return list;
     }
@@ -1197,6 +1183,12 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
     private void invalidateCache(String appName, @Nullable String vipAddress, @Nullable String secureVipAddress) {
         // invalidate cache
         responseCache.invalidate(appName, vipAddress, secureVipAddress);
+    }
+
+    protected void updateRenewsPerMinThreshold() {
+        this.numberOfRenewsPerMinThreshold = (int) (this.expectedNumberOfClientsSendingRenews
+                * (60.0 / serverConfig.getExpectedClientRenewalIntervalSeconds())
+                * serverConfig.getRenewalPercentThreshold());
     }
 
     private static final class RecentlyChangedItem {
@@ -1236,6 +1228,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         deltaRetentionTimer.cancel();
         evictionTimer.cancel();
         renewsLastMin.stop();
+        responseCache.stop();
     }
 
     @com.netflix.servo.annotations.Monitor(name = "numOfElementsinInstanceCache", description = "Number of overrides in the instance Cache", type = DataSourceType.GAUGE)
@@ -1282,29 +1275,52 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
     }
 
-    private class CircularQueue<E> extends ConcurrentLinkedQueue<E> {
-        private int size = 0;
+    /* visible for testing */ static class CircularQueue<E> extends AbstractQueue<E> {
 
-        public CircularQueue(int size) {
-            this.size = size;
+        private final ArrayBlockingQueue<E> delegate;
+        private final int capacity;
+
+        public CircularQueue(int capacity) {
+            this.capacity = capacity;
+            this.delegate = new ArrayBlockingQueue<>(capacity);
         }
 
         @Override
-        public boolean add(E e) {
-            this.makeSpaceIfNotAvailable();
-            return super.add(e);
-
+        public Iterator<E> iterator() {
+            return delegate.iterator();
         }
 
-        private void makeSpaceIfNotAvailable() {
-            if (this.size() == size) {
-                this.remove();
-            }
+        @Override
+        public int size() {
+            return delegate.size();
         }
 
+        @Override
         public boolean offer(E e) {
-            this.makeSpaceIfNotAvailable();
-            return super.offer(e);
+            while (!delegate.offer(e)) {
+                delegate.poll();
+            }
+            return true;
+        }
+
+        @Override
+        public E poll() {
+            return delegate.poll();
+        }
+
+        @Override
+        public E peek() {
+            return delegate.peek();
+        }
+
+        @Override
+        public void clear() {
+            delegate.clear();
+        }
+
+        @Override
+        public Object[] toArray() {
+            return delegate.toArray();
         }
     }
 

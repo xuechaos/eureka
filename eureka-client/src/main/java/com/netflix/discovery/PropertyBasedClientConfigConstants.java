@@ -13,6 +13,7 @@ final class PropertyBasedClientConfigConstants {
 
     static final String REGISTRATION_ENABLED_KEY = "registration.enabled";
     static final String FETCH_REGISTRY_ENABLED_KEY = "shouldFetchRegistry";
+    static final String SHOULD_ENFORCE_FETCH_REGISTRY_AT_INIT_KEY = "shouldEnforceFetchRegistryAtInit";
 
     static final String REGISTRY_REFRESH_INTERVAL_KEY = "client.refresh.interval";
     static final String REGISTRATION_REPLICATION_INTERVAL_KEY = "appinfo.replicate.interval";
@@ -22,7 +23,9 @@ final class PropertyBasedClientConfigConstants {
     static final String CACHEREFRESH_THREADPOOL_SIZE_KEY = "client.cacheRefresh.threadPoolSize";
     static final String CACHEREFRESH_BACKOFF_BOUND_KEY = "client.cacheRefresh.exponentialBackOffBound";
 
+    static final String SHOULD_UNREGISTER_ON_SHUTDOWN_KEY = "shouldUnregisterOnShutdown";
     static final String SHOULD_ONDEMAND_UPDATE_STATUS_KEY = "shouldOnDemandUpdateStatusChange";
+    static final String SHOULD_ENFORCE_REGISTRATION_AT_INIT = "shouldEnforceRegistrationAtInit";
     static final String SHOULD_DISABLE_DELTA_KEY = "disableDelta";
     static final String SHOULD_FETCH_REMOTE_REGION_KEY = "fetchRemoteRegionsRegistry";
     static final String SHOULD_FILTER_ONLY_UP_INSTANCES_KEY = "shouldFilterOnlyUpInstances";

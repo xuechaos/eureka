@@ -16,8 +16,9 @@
 
 package com.netflix.discovery;
 
-import javax.annotation.Nullable;
 import java.util.List;
+
+import javax.annotation.Nullable;
 
 import com.google.inject.ImplementedBy;
 import com.netflix.discovery.shared.transport.EurekaTransportConfig;
@@ -284,6 +285,16 @@ public interface EurekaClientConfig {
     boolean shouldRegisterWithEureka();
 
     /**
+     * Indicates whether the client should explicitly unregister itself from the remote server
+     * on client shutdown.
+     *
+     * @return true if this instance should unregister with eureka on client shutdown, false otherwise
+     */
+    default boolean shouldUnregisterOnShutdown() {
+        return true;
+    }
+
+    /**
      * Indicates whether or not this instance should try to use the eureka
      * server in the same zone for latency and/or other reason.
      *
@@ -446,6 +457,18 @@ public interface EurekaClientConfig {
     boolean shouldFetchRegistry();
 
     /**
+     * If set to true, the {@link EurekaClient} initialization should throw an exception at constructor time
+     * if the initial fetch of eureka registry information from the remote servers is unsuccessful.
+     *
+     * Note that if {@link #shouldFetchRegistry()} is set to false, then this config is a no-op.
+     *
+     * @return true or false for whether the client initialization should enforce an initial fetch.
+     */
+    default boolean shouldEnforceFetchRegistryAtInit() {
+        return false;
+    }
+
+    /**
      * Indicates whether the client is only interested in the registry information for a single VIP.
      *
      * @return the address of the VIP (name:port).
@@ -510,6 +533,18 @@ public interface EurekaClientConfig {
     boolean shouldOnDemandUpdateStatusChange();
 
     /**
+     * If set to true, the {@link EurekaClient} initialization should throw an exception at constructor time
+     * if an initial registration to the remote servers is unsuccessful.
+     *
+     * Note that if {@link #shouldRegisterWithEureka()} is set to false, then this config is a no-op
+     *
+     * @return true or false for whether the client initialization should enforce an initial registration
+     */
+    default boolean shouldEnforceRegistrationAtInit() {
+        return false;
+    }
+
+    /**
      * This is a transient config and once the latest codecs are stable, can be removed (as there will only be one)
      *
      * @return the class name of the encoding codec to use for the client. If none set a default codec will be used
@@ -530,7 +565,8 @@ public interface EurekaClientConfig {
 
     /**
      * To avoid configuration API pollution when trying new/experimental or features or for the migration process,
-     * the corresponding configuration can be put into experimental configuration section.
+     * the corresponding configuration can be put into experimental configuration section. Config format is:
+     * eureka.experimental.freeFormConfigString
      *
      * @return a property of experimental feature
      */

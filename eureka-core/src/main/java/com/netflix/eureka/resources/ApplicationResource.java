@@ -107,6 +107,7 @@ public class ApplicationResource {
         );
 
         String payLoad = responseCache.get(cacheKey);
+        CurrentRequestVersion.remove();
 
         if (payLoad != null) {
             logger.debug("Found: {}", appName);
@@ -149,6 +150,8 @@ public class ApplicationResource {
             return Response.status(400).entity("Missing instanceId").build();
         } else if (isBlank(info.getHostName())) {
             return Response.status(400).entity("Missing hostname").build();
+        } else if (isBlank(info.getIPAddr())) {
+            return Response.status(400).entity("Missing ip address").build();
         } else if (isBlank(info.getAppName())) {
             return Response.status(400).entity("Missing appName").build();
         } else if (!appName.equals(info.getAppName())) {

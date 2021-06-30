@@ -16,11 +16,12 @@
 
 package com.netflix.eureka;
 
-import com.netflix.eureka.aws.AwsBindingStrategy;
-
-import javax.annotation.Nullable;
 import java.util.Map;
 import java.util.Set;
+
+import javax.annotation.Nullable;
+
+import com.netflix.eureka.aws.AwsBindingStrategy;
 
 /**
  * Configuration information required by the eureka server to operate.
@@ -133,6 +134,16 @@ public interface EurekaServerConfig {
      * @return time in milliseconds indicating the interval.
      */
     int getRenewalThresholdUpdateIntervalMs();
+
+    /**
+     * The interval with which clients are expected to send their heartbeats. Defaults to 30
+     * seconds. If clients send heartbeats with different frequency, say, every 15 seconds, then
+     * this parameter should be tuned accordingly, otherwise, self-preservation won't work as
+     * expected.
+     *
+     * @return time in seconds indicating the expected interval
+     */
+    int getExpectedClientRenewalIntervalSeconds();
 
     /**
      * The interval with which the information about the changes in peer eureka
@@ -253,6 +264,13 @@ public interface EurekaServerConfig {
      * @return time in milliseconds.
      */
     long getEvictionIntervalTimerInMs();
+
+    /**
+     * Whether to use AWS API to query ASG statuses.
+     *
+     * @return true if AWS API is used, false otherwise.
+     */
+    boolean shouldUseAwsAsgApi();
 
     /**
      * Get the timeout value for querying the <em>AWS</em> for <em>ASG</em>
@@ -408,7 +426,7 @@ public interface EurekaServerConfig {
      * @return maximum number of threads to be used for replication.
      */
     int getMaxThreadsForPeerReplication();
-    
+
     /**
      * Get the minimum number of available peer replication instances
      * for this instance to be considered healthy. The design of eureka allows
@@ -418,7 +436,7 @@ public interface EurekaServerConfig {
      * The default value of -1 is interpreted as a marker to not compare
      * the number of replicas. This would be done to either disable this check
      * or to run eureka in a single node configuration.
-     * 
+     *
      * @return minimum number of available peer replication instances
      *         for this instance to be considered healthy.
      */
@@ -573,6 +591,16 @@ public interface EurekaServerConfig {
     boolean shouldBatchReplication();
 
     /**
+     * Allows to configure URL which Eureka should treat as its own during replication. In some cases Eureka URLs don't
+     * match IP address or hostname (for example, when nodes are behind load balancers). Setting this parameter on each
+     * node to URLs of associated load balancers helps to avoid replication to the same node where event originally came
+     * to. Important: you need to configure the whole URL including scheme and path, like
+     * <code>http://eureka-node1.mydomain.com:8010/eureka/v2/</code>
+     * @return URL Eureka will treat as its own
+     */
+    String getMyUrl();
+
+    /**
      * Indicates whether the eureka server should log/metric clientAuthHeaders
      * @return {@code true} if the clientAuthHeaders should be logged and/or emitted as metrics
      */
@@ -670,4 +698,11 @@ public interface EurekaServerConfig {
      * @return a property of experimental feature
      */
     String getExperimental(String name);
+
+    /**
+     * Get the capacity of responseCache, default value is 1000.
+     *
+     * @return the capacity of responseCache.
+     */
+    int getInitialCapacityOfResponseCache();
 }

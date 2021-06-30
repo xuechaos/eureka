@@ -229,6 +229,7 @@ public final class Converters {
     public static class InstanceInfoConverter implements Converter {
 
         private static final String ELEM_OVERRIDDEN_STATUS = "overriddenstatus";
+        private static final String ELEM_OVERRIDDEN_STATUS_ALT = "overriddenStatus";
         private static final String ELEM_HOST = "hostName";
         private static final String ELEM_INSTANCE_ID = "instanceId";
         private static final String ELEM_APP = "app";
@@ -387,6 +388,9 @@ public final class Converters {
                 } else if (ELEM_OVERRIDDEN_STATUS.equals(nodeName)) {
                     builder.setOverriddenStatus(InstanceStatus.toEnum(reader
                             .getValue()));
+                } else if (ELEM_OVERRIDDEN_STATUS_ALT.equals(nodeName)) {
+                    builder.setOverriddenStatus(InstanceStatus.toEnum(reader
+                            .getValue()));
                 } else if (ELEM_PORT.equals(nodeName)) {
                     builder.setPort(Integer.valueOf(reader.getValue())
                             .intValue());
@@ -508,7 +512,7 @@ public final class Converters {
                     if (info.getName() == Name.Amazon) {
                         Map<String, String> metadataMap = (Map<String, String>) context
                                 .convertAnother(info, Map.class);
-                        Map<String, String> metadataMapInter = new HashMap<String, String>(metadataMap.size());
+                        Map<String, String> metadataMapInter = new HashMap<>(metadataMap.size());
                         for (Map.Entry<String, String> entry : metadataMap.entrySet()) {
                             metadataMapInter.put(StringCache.intern(entry.getKey()), StringCache.intern(entry.getValue()));
                         }
@@ -611,7 +615,7 @@ public final class Converters {
 
                 long longValue = 0;
                 try {
-                    longValue = Long.valueOf(nodeValue).longValue();
+                    longValue = Long.parseLong(nodeValue);
                 } catch (NumberFormatException ne) {
                     continue;
                 }

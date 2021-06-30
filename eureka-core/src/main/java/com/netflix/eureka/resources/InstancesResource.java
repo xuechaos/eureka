@@ -62,10 +62,11 @@ public class InstancesResource {
                             @PathParam("id") String id) {
         CurrentRequestVersion.set(Version.toEnum(version));
         List<InstanceInfo> list = registry.getInstancesById(id);
-        if (list != null && list.size() > 0) {
+        CurrentRequestVersion.remove();
+        if (list != null && !list.isEmpty()) {
             return Response.ok(list.get(0)).build();
         } else {
-            logger.info("Not Found: " + id);
+            logger.info("Not Found: {}", id);
             return Response.status(Status.NOT_FOUND).build();
         }
     }

@@ -55,7 +55,7 @@ public class InstanceInfoGenerator {
             currentIt = serviceIterator();
             allApplications = new Applications();
         }
-        List<InstanceInfo> instanceBatch = new ArrayList<InstanceInfo>();
+        List<InstanceInfo> instanceBatch = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             InstanceInfo next = currentIt.next();
             next.setActionType(ActionType.ADDED);
@@ -85,7 +85,7 @@ public class InstanceInfoGenerator {
                 if (!hasNext()) {
                     throw new NoSuchElementException("no more InstanceInfo elements");
                 }
-                InstanceInfo toReturn = generateInstanceInfo(currentApp, appInstanceIds[currentApp], useInstanceId);
+                InstanceInfo toReturn = generateInstanceInfo(currentApp, appInstanceIds[currentApp], useInstanceId, ActionType.ADDED);
                 appInstanceIds[currentApp]++;
                 currentApp = (currentApp + 1) % appNames.length;
                 returned++;
@@ -156,13 +156,25 @@ public class InstanceInfoGenerator {
         return new InstanceInfoGeneratorBuilder(instanceCount, appNames);
     }
 
+    public Applications takeDeltaForDelete(boolean useInstanceId, int instanceCount) {
+        List<InstanceInfo> instanceInfoList = new ArrayList<>();
+        for (int i = 0; i < instanceCount; i ++) {
+            instanceInfoList.add(this.generateInstanceInfo(i, i, useInstanceId, ActionType.DELETED));
+        }
+        Applications delete = EurekaEntityFunctions.toApplications(toApplicationMap(instanceInfoList));
+        allApplications = mergeApplications(allApplications, delete);
+        delete.setAppsHashCode(allApplications.getAppsHashCode());
+        return delete;
+    }
+
     // useInstanceId to false to generate older InstanceInfo types that does not use instanceId field for instance id.
-    private InstanceInfo generateInstanceInfo(int appIndex, int appInstanceId, boolean useInstanceId) {
+    private InstanceInfo generateInstanceInfo(int appIndex, int appInstanceId, boolean useInstanceId, ActionType actionType) {
         String appName = appNames[appIndex];
         String hostName = "instance" + appInstanceId + '.' + appName + ".com";
         String privateHostname = "ip-10.0" + appIndex + "." + appInstanceId + ".compute.internal";
         String publicIp = "20.0." + appIndex + '.' + appInstanceId;
         String privateIp = "192.168." + appIndex + '.' + appInstanceId;
+        String ipv6 = "::FFFF:" + publicIp;
 
         String instanceId = String.format("i-%04d%04d", appIndex, appInstanceId);
         if (taggedId) {
@@ -179,6 +191,7 @@ public class InstanceInfoGenerator {
                 .addMetadata(MetaDataKey.localIpv4, privateIp)
                 .addMetadata(MetaDataKey.publicHostname, hostName)
                 .addMetadata(MetaDataKey.publicIpv4, publicIp)
+                .addMetadata(MetaDataKey.ipv6, ipv6)
                 .build();
 
         String unsecureURL = "http://" + hostName + ":8080";
@@ -199,7 +212,7 @@ public class InstanceInfoGenerator {
                 : InstanceInfo.Builder.newBuilder();
 
         builder
-                .setActionType(ActionType.ADDED)
+                .setActionType(actionType)
                 .setAppGroupName(appName + "Group")
                 .setAppName(appName)
                 .setHostName(hostName)

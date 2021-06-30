@@ -85,9 +85,10 @@ public class Route53Binder implements AwsBinder {
 
     @Override
     @PostConstruct
-    public void start() throws InterruptedException {
-        doBind();
-        timer.schedule(
+    public void start() {
+        try {
+            doBind();
+            timer.schedule(
                 new TimerTask() {
                     @Override
                     public void run() {
@@ -100,6 +101,9 @@ public class Route53Binder implements AwsBinder {
                 },
                 serverConfig.getRoute53BindingRetryIntervalMs(),
                 serverConfig.getRoute53BindingRetryIntervalMs());
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void doBind() throws InterruptedException {
@@ -143,7 +147,9 @@ public class Route53Binder implements AwsBinder {
             Thread.sleep(1000);
             // check change not overwritten
             ResourceRecordSet resourceRecordSet = getResourceRecordSet(rrs.getResourceRecordSet().getName(), rrs.getHostedZone());
-            return resourceRecordSet.getResourceRecords().equals(rrs.getResourceRecordSet().getResourceRecords());
+            if (resourceRecordSet != null) {
+                return resourceRecordSet.getResourceRecords().equals(rrs.getResourceRecordSet().getResourceRecords());
+            }
         }
         return false;
     }
@@ -154,7 +160,7 @@ public class Route53Binder implements AwsBinder {
             try {
                 domains.add(extractDomain(url));
             } catch(MalformedURLException e) {
-                logger.error("Invalid url " + url, e);
+                logger.error("Invalid url {}", url, e);
             }
         }
         return domains;
@@ -191,7 +197,7 @@ public class Route53Binder implements AwsBinder {
         }
 
         if (firstError != null) {
-            logger.error("Cannot execute change " + change + " " + firstError, firstError);
+            logger.error("Cannot execute change {} {}", change, firstError, firstError);
         }
 
         return false;
@@ -258,11 +264,15 @@ public class Route53Binder implements AwsBinder {
 
     @Override
     @PreDestroy
-    public void shutdown() throws InterruptedException {
+    public void shutdown() {
         timer.cancel();
 
         for(String domain : getDeclaredDomains()) {
-            unbindFromDomain(domain);
+            try {
+                unbindFromDomain(domain);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         amazonRoute53Client.shutdown();

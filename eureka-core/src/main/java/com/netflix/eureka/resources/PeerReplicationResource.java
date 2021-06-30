@@ -85,8 +85,8 @@ public class PeerReplicationResource {
                     batchResponse.addResponse(dispatch(instanceInfo));
                 } catch (Exception e) {
                     batchResponse.addResponse(new ReplicationInstanceResponse(Status.INTERNAL_SERVER_ERROR.getStatusCode(), null));
-                    logger.error(instanceInfo.getAction() + " request processing failed for batch item "
-                            + instanceInfo.getAppName() + '/' + instanceInfo.getId(), e);
+                    logger.error("{} request processing failed for batch item {}/{}",
+                            instanceInfo.getAction(), instanceInfo.getAppName(), instanceInfo.getId(), e);
                 }
             }
             return Response.ok(batchResponse).build();
@@ -110,7 +110,7 @@ public class PeerReplicationResource {
                 singleResponseBuilder = handleRegister(instanceInfo, applicationResource);
                 break;
             case Heartbeat:
-                singleResponseBuilder = handleHeartbeat(resource, lastDirtyTimestamp, overriddenStatus, instanceStatus);
+                singleResponseBuilder = handleHeartbeat(serverConfig, resource, lastDirtyTimestamp, overriddenStatus, instanceStatus);
                 break;
             case Cancel:
                 singleResponseBuilder = handleCancel(resource);
@@ -144,11 +144,20 @@ public class PeerReplicationResource {
         return new Builder().setStatusCode(response.getStatus());
     }
 
-    private static Builder handleHeartbeat(InstanceResource resource, String lastDirtyTimestamp, String overriddenStatus, String instanceStatus) {
+    private static Builder handleHeartbeat(EurekaServerConfig config, InstanceResource resource, String lastDirtyTimestamp, String overriddenStatus, String instanceStatus) {
         Response response = resource.renewLease(REPLICATION, overriddenStatus, instanceStatus, lastDirtyTimestamp);
-        Builder responseBuilder = new Builder().setStatusCode(response.getStatus());
-        if (response.getStatus() == Status.OK.getStatusCode() && response.getEntity() != null) {
-            responseBuilder.setResponseEntity((InstanceInfo) response.getEntity());
+        int responseStatus = response.getStatus();
+        Builder responseBuilder = new Builder().setStatusCode(responseStatus);
+
+        if ("false".equals(config.getExperimental("bugfix.934"))) {
+            if (responseStatus == Status.OK.getStatusCode() && response.getEntity() != null) {
+                responseBuilder.setResponseEntity((InstanceInfo) response.getEntity());
+            }
+        } else {
+            if ((responseStatus == Status.OK.getStatusCode() || responseStatus == Status.CONFLICT.getStatusCode())
+                    && response.getEntity() != null) {
+                responseBuilder.setResponseEntity((InstanceInfo) response.getEntity());
+            }
         }
         return responseBuilder;
     }

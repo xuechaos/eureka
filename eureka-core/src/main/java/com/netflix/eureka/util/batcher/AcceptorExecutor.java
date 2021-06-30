@@ -47,6 +47,7 @@ class AcceptorExecutor<ID, T> {
 
     private static final Logger logger = LoggerFactory.getLogger(AcceptorExecutor.class);
 
+    private final String id;
     private final int maxBufferSize;
     private final int maxBatchingSize;
     private final long maxBatchingDelay;
@@ -94,6 +95,7 @@ class AcceptorExecutor<ID, T> {
                      long maxBatchingDelay,
                      long congestionRetryDelayMs,
                      long networkFailureRetryMs) {
+        this.id = id;
         this.maxBufferSize = maxBufferSize;
         this.maxBatchingSize = maxBatchingSize;
         this.maxBatchingDelay = maxBatchingDelay;
@@ -148,6 +150,7 @@ class AcceptorExecutor<ID, T> {
 
     void shutdown() {
         if (isShutdown.compareAndSet(false, true)) {
+            Monitors.unregisterObject(id, this);
             acceptorThread.interrupt();
         }
     }
@@ -219,13 +222,14 @@ class AcceptorExecutor<ID, T> {
                 drainReprocessQueue();
                 drainAcceptorQueue();
 
-                if (!isShutdown.get()) {
-                    // If all queues are empty, block for a while on the acceptor queue
-                    if (reprocessQueue.isEmpty() && acceptorQueue.isEmpty() && pendingTasks.isEmpty()) {
-                        TaskHolder<ID, T> taskHolder = acceptorQueue.poll(10, TimeUnit.MILLISECONDS);
-                        if (taskHolder != null) {
-                            appendTaskHolder(taskHolder);
-                        }
+                if (isShutdown.get()) {
+                    break;
+                }
+                // If all queues are empty, block for a while on the acceptor queue
+                if (reprocessQueue.isEmpty() && acceptorQueue.isEmpty() && pendingTasks.isEmpty()) {
+                    TaskHolder<ID, T> taskHolder = acceptorQueue.poll(10, TimeUnit.MILLISECONDS);
+                    if (taskHolder != null) {
+                        appendTaskHolder(taskHolder);
                     }
                 }
             } while (!reprocessQueue.isEmpty() || !acceptorQueue.isEmpty() || pendingTasks.isEmpty());

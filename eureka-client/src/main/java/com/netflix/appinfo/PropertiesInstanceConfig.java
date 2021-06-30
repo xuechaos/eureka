@@ -108,7 +108,7 @@ public abstract class PropertiesInstanceConfig extends AbstractInstanceConfig im
      */
     @Override
     public int getSecurePort() {
-        return configInstance.getIntProperty(namespace + SECURE_PORT_KEY, super.getSecurePort()) .get();
+        return configInstance.getIntProperty(namespace + SECURE_PORT_KEY, super.getSecurePort()).get();
     }
 
     /*
@@ -211,7 +211,7 @@ public abstract class PropertiesInstanceConfig extends AbstractInstanceConfig im
     @Override
     public Map<String, String> getMetadataMap() {
         String metadataNamespace = namespace + INSTANCE_METADATA_PREFIX + ".";
-        Map<String, String> metadataMap = new LinkedHashMap<String, String>();
+        Map<String, String> metadataMap = new LinkedHashMap<>();
         Configuration config = (Configuration) configInstance.getBackingConfigurationSource();
         String subsetPrefix = metadataNamespace.charAt(metadataNamespace.length() - 1) == '.'
                 ? metadataNamespace.substring(0, metadataNamespace.length() - 1)
@@ -292,6 +292,14 @@ public abstract class PropertiesInstanceConfig extends AbstractInstanceConfig im
     public String[] getDefaultAddressResolutionOrder() {
         String result = configInstance.getStringProperty(namespace + DEFAULT_ADDRESS_RESOLUTION_ORDER_KEY, null).get();
         return result == null ? new String[0] : result.split(",");
+    }
+
+    /**
+     * Indicates if the public ipv4 address of the instance should be advertised.
+     * @return true if the public ipv4 address of the instance should be advertised, false otherwise .
+     */
+    public boolean shouldBroadcastPublicIpv4Addr() {
+        return configInstance.getBooleanProperty(namespace + BROADCAST_PUBLIC_IPV4_ADDR_KEY, super.shouldBroadcastPublicIpv4Addr()).get();
     }
 
     @Override

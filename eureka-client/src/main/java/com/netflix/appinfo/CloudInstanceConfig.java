@@ -49,7 +49,6 @@ public class CloudInstanceConfig extends PropertiesInstanceConfig implements Ref
             MetaDataKey.localIpv4.name()
     };
 
-    private final AmazonInfoConfig amazonInfoConfig;
     private final RefreshableAmazonInfoProvider amazonInfoHolder;
 
     public CloudInstanceConfig() {
@@ -64,9 +63,13 @@ public class CloudInstanceConfig extends PropertiesInstanceConfig implements Ref
         this(CommonConstants.DEFAULT_CONFIG_NAMESPACE, new Archaius1AmazonInfoConfig(CommonConstants.DEFAULT_CONFIG_NAMESPACE), info, false);
     }
 
+    /* visible for testing */ CloudInstanceConfig(String namespace, RefreshableAmazonInfoProvider refreshableAmazonInfoProvider) {
+        super(namespace);
+        this.amazonInfoHolder = refreshableAmazonInfoProvider;
+    }
+
     /* visible for testing */ CloudInstanceConfig(String namespace, AmazonInfoConfig amazonInfoConfig, AmazonInfo initialInfo, boolean eagerInit) {
         super(namespace);
-        this.amazonInfoConfig = amazonInfoConfig;
         if (eagerInit) {
             RefreshableAmazonInfoProvider.FallbackAddressProvider fallbackAddressProvider =
                     new RefreshableAmazonInfoProvider.FallbackAddressProvider() {
@@ -125,8 +128,16 @@ public class CloudInstanceConfig extends PropertiesInstanceConfig implements Ref
 
     @Override
     public String getIpAddress() {
-        String ipAddr = amazonInfoHolder.get().get(MetaDataKey.localIpv4);
-        return ipAddr == null ? super.getIpAddress() : ipAddr;
+        return this.shouldBroadcastPublicIpv4Addr() ?  getPublicIpv4Addr() : getPrivateIpv4Addr();
+    }
+
+    private String getPrivateIpv4Addr() {
+        String privateIpv4Addr = amazonInfoHolder.get().get(MetaDataKey.localIpv4);
+        return privateIpv4Addr == null ? super.getIpAddress() : privateIpv4Addr;
+    }
+    private String getPublicIpv4Addr() {
+        String publicIpv4Addr = amazonInfoHolder.get().get(MetaDataKey.publicIpv4);
+        return publicIpv4Addr == null ? super.getIpAddress() : publicIpv4Addr;
     }
 
     @Override

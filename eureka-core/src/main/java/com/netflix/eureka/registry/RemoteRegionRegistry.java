@@ -20,9 +20,9 @@ import javax.ws.rs.core.MediaType;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
@@ -30,6 +30,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.netflix.appinfo.InstanceInfo;
@@ -50,6 +52,7 @@ import com.netflix.eureka.EurekaServerConfig;
 import com.netflix.eureka.EurekaServerIdentity;
 import com.netflix.eureka.resources.ServerCodecs;
 import com.netflix.eureka.transport.EurekaServerHttpClients;
+import com.netflix.servo.annotations.DataSourceType;
 import com.netflix.servo.monitor.Monitors;
 import com.netflix.servo.monitor.Stopwatch;
 import com.sun.jersey.api.client.ClientResponse;
@@ -58,11 +61,16 @@ import com.sun.jersey.client.apache4.ApacheHttpClient4;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static com.netflix.eureka.Names.METRIC_REGISTRY_PREFIX;
+
 /**
  * Handles all registry operations that needs to be done on a eureka service running in an other region.
  *
  * The primary operations include fetching registry information from remote region and fetching delta information
  * on a periodic basis.
+ *
+ * TODO: a lot of the networking code in this class can be replaced by newer code in
+ * {@link com.netflix.discovery.DiscoveryClient}
  *
  * @author Karthik Ranganathan
  *
@@ -77,14 +85,17 @@ public class RemoteRegionRegistry implements LookupService<String> {
 
     private final ScheduledExecutorService scheduler;
     // monotonically increasing generation counter to ensure stale threads do not reset registry to an older version
-    private final AtomicLong fullRegistryGeneration = new AtomicLong(0);
-    private final AtomicLong deltaGeneration = new AtomicLong(0);
+    private final AtomicLong fetchRegistryGeneration = new AtomicLong(0);
+    private final Lock fetchRegistryUpdateLock = new ReentrantLock();
 
-    private final AtomicReference<Applications> applications = new AtomicReference<Applications>();
-    private final AtomicReference<Applications> applicationsDelta = new AtomicReference<Applications>();
+    private final AtomicReference<Applications> applications = new AtomicReference<>(new Applications());
+    private final AtomicReference<Applications> applicationsDelta = new AtomicReference<>(new Applications());
     private final EurekaServerConfig serverConfig;
     private volatile boolean readyForServingData;
     private final EurekaHttpClient eurekaHttpClient;
+    private long timeOfLastSuccessfulRemoteFetch = System.currentTimeMillis();
+    private long deltaSuccesses = 0;
+    private long deltaMismatches = 0;
 
     @Inject
     public RemoteRegionRegistry(EurekaServerConfig serverConfig,
@@ -147,7 +158,6 @@ public class RemoteRegionRegistry implements LookupService<String> {
         }
         this.eurekaHttpClient = newEurekaHttpClient;
 
-        applications.set(new Applications());
         try {
             if (fetchRegistry()) {
                 this.readyForServingData = true;
@@ -197,6 +207,12 @@ public class RemoteRegionRegistry implements LookupService<String> {
                         remoteRegionFetchTask
                 ),
                 serverConfig.getRemoteRegionRegistryFetchInterval(), TimeUnit.SECONDS);
+
+        try {
+            Monitors.registerObject(this);
+        } catch (Throwable e) {
+            logger.warn("Cannot register the JMX monitor for the RemoteRegionRegistry :", e);
+        }
     }
 
     /**
@@ -229,23 +245,28 @@ public class RemoteRegionRegistry implements LookupService<String> {
             }
             logTotalInstances();
         } catch (Throwable e) {
-            logger.error("Unable to fetch registry information from the remote registry " + this.remoteRegionURL.toString(), e);
+            logger.error("Unable to fetch registry information from the remote registry {}", this.remoteRegionURL, e);
             return false;
         } finally {
             if (tracer != null) {
                 tracer.stop();
             }
         }
+
+        if (success) {
+            timeOfLastSuccessfulRemoteFetch = System.currentTimeMillis();
+        }
+
         return success;
     }
 
     private boolean fetchAndStoreDelta() throws Throwable {
-        long currDeltaGeneration = deltaGeneration.get();
+        long currGeneration = fetchRegistryGeneration.get();
         Applications delta = fetchRemoteRegistry(true);
 
         if (delta == null) {
             logger.error("The delta is null for some reason. Not storing this information");
-        } else if (deltaGeneration.compareAndSet(currDeltaGeneration, currDeltaGeneration + 1)) {
+        } else if (fetchRegistryGeneration.compareAndSet(currGeneration, currGeneration + 1)) {
             this.applicationsDelta.set(delta);
         } else {
             delta = null;  // set the delta to null so we don't use it
@@ -257,11 +278,24 @@ public class RemoteRegionRegistry implements LookupService<String> {
                     + "safe. Hence got the full registry.");
             return storeFullRegistry();
         } else {
-            updateDelta(delta);
-            String reconcileHashCode = getApplications().getReconcileHashCode();
+            String reconcileHashCode = "";
+            if (fetchRegistryUpdateLock.tryLock()) {
+                try {
+                    updateDelta(delta);
+                    reconcileHashCode = getApplications().getReconcileHashCode();
+                } finally {
+                    fetchRegistryUpdateLock.unlock();
+                }
+            } else {
+                logger.warn("Cannot acquire update lock, aborting updateDelta operation of fetchAndStoreDelta");
+            }
+
             // There is a diff in number of instances for some reason
-            if ((!reconcileHashCode.equals(delta.getAppsHashCode()))) {
+            if (!reconcileHashCode.equals(delta.getAppsHashCode())) {
+                deltaMismatches++;
                 return reconcileAndLogDifference(delta, reconcileHashCode);
+            } else {
+                deltaSuccesses++;
             }
         }
 
@@ -345,12 +379,13 @@ public class RemoteRegionRegistry implements LookupService<String> {
      * @return the full registry information.
      */
     public boolean storeFullRegistry() {
-        long currentUpdateGeneration = fullRegistryGeneration.get();
+        long currentGeneration = fetchRegistryGeneration.get();
         Applications apps = fetchRemoteRegistry(false);
         if (apps == null) {
             logger.error("The application is null for some reason. Not storing this information");
-        } else if (fullRegistryGeneration.compareAndSet(currentUpdateGeneration, currentUpdateGeneration + 1)) {
+        } else if (fetchRegistryGeneration.compareAndSet(currentGeneration, currentGeneration + 1)) {
             applications.set(apps);
+            applicationsDelta.set(apps);
             logger.info("Successfully updated registry with the latest content");
             return true;
         } else {
@@ -377,7 +412,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
                 }
                 logger.warn("Cannot get the data from {} : {}", this.remoteRegionURL, httpStatus);
             } catch (Throwable t) {
-                logger.error("Can't get a response from " + this.remoteRegionURL, t);
+                logger.error("Can't get a response from {}", this.remoteRegionURL, t);
             }
         } else {
             ClientResponse response = null;
@@ -394,7 +429,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
                 }
                 logger.warn("Cannot get the data from {} : {}", this.remoteRegionURL, httpStatus);
             } catch (Throwable t) {
-                logger.error("Can't get a response from " + this.remoteRegionURL, t);
+                logger.error("Can't get a response from {}", this.remoteRegionURL, t);
             } finally {
                 closeResponse(response);
             }
@@ -405,7 +440,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
     /**
      * Reconciles the delta information fetched to see if the hashcodes match.
      *
-     * @param delta - the delta information fetched previously for reconcililation.
+     * @param delta - the delta information fetched previously for reconciliation.
      * @param reconcileHashCode - the hashcode for comparison.
      * @return - response
      * @throws Throwable
@@ -414,25 +449,25 @@ public class RemoteRegionRegistry implements LookupService<String> {
         logger.warn("The Reconcile hashcodes do not match, client : {}, server : {}. Getting the full registry",
                 reconcileHashCode, delta.getAppsHashCode());
 
-        Applications serverApps = this.fetchRemoteRegistry(false);
+        long currentGeneration = fetchRegistryGeneration.get();
 
-        Map<String, List<String>> reconcileDiffMap = getApplications().getReconcileMapDiff(serverApps);
-        String reconcileString = "";
-        for (Map.Entry<String, List<String>> mapEntry : reconcileDiffMap
-                .entrySet()) {
-            reconcileString = reconcileString + mapEntry.getKey() + ": ";
-            for (String displayString : mapEntry.getValue()) {
-                reconcileString = reconcileString + displayString;
-            }
-            reconcileString = reconcileString + "\n";
+        Applications apps = this.fetchRemoteRegistry(false);
+        if (apps == null) {
+            logger.error("The application is null for some reason. Not storing this information");
+            return false;
         }
-        logger.warn("The reconcile string is {}", reconcileString);
-        applications.set(serverApps);
-        applicationsDelta.set(serverApps);
-        logger.warn("The Reconcile hashcodes after complete sync up, client : {}, server : {}.",
-                getApplications().getReconcileHashCode(),
-                delta.getAppsHashCode());
-        return true;
+
+        if (fetchRegistryGeneration.compareAndSet(currentGeneration, currentGeneration + 1)) {
+            applications.set(apps);
+            applicationsDelta.set(apps);
+            logger.warn("The Reconcile hashcodes after complete sync up, client : {}, server : {}.",
+                    getApplications().getReconcileHashCode(),
+                    delta.getAppsHashCode());
+            return true;
+        }else {
+            logger.warn("Not setting the applications map as another thread has advanced the update generation");
+            return true;  // still return true
+        }
     }
 
     /**
@@ -463,7 +498,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
 
     @Override
     public List<InstanceInfo> getInstancesById(String id) {
-        List<InstanceInfo> list = Collections.emptyList();
+        List<InstanceInfo> list = new ArrayList<>(1);
 
         for (Application app : applications.get().getRegisteredApplications()) {
             InstanceInfo info = app.getByInstanceId(id);
@@ -472,7 +507,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
                 return list;
             }
         }
-        return list;
+        return Collections.emptyList();
     }
 
     public Applications getApplicationDeltas() {
@@ -485,5 +520,20 @@ public class RemoteRegionRegistry implements LookupService<String> {
         }
         String enabled = serverConfig.getExperimental("transport.enabled");
         return enabled != null && "true".equalsIgnoreCase(enabled);
+    }
+
+    @com.netflix.servo.annotations.Monitor(name = METRIC_REGISTRY_PREFIX + "secondsSinceLastSuccessfulRemoteFetch", type = DataSourceType.GAUGE)
+    public long getTimeOfLastSuccessfulRemoteFetch() {
+        return (System.currentTimeMillis() - timeOfLastSuccessfulRemoteFetch) / 1000;
+    }
+
+    @com.netflix.servo.annotations.Monitor(name = METRIC_REGISTRY_PREFIX + "remoteDeltaSuccesses", type = DataSourceType.COUNTER)
+    public long getRemoteFetchSuccesses() {
+        return deltaSuccesses;
+    }
+
+    @com.netflix.servo.annotations.Monitor(name = METRIC_REGISTRY_PREFIX + "remoteDeltaMismatches", type = DataSourceType.COUNTER)
+    public long getRemoteFetchMismatches() {
+        return deltaMismatches;
     }
 }

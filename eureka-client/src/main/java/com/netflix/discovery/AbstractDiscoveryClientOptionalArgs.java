@@ -3,9 +3,12 @@ package com.netflix.discovery;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 
 import javax.inject.Provider;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
 
 import com.google.inject.Inject;
 import com.netflix.appinfo.HealthCheckCallback;
@@ -23,6 +26,8 @@ public abstract class AbstractDiscoveryClientOptionalArgs<T> {
 
     Provider<HealthCheckHandler> healthCheckHandlerProvider;
 
+    PreRegistrationHandler preRegistrationHandler;
+
     Collection<T> additionalFilters;
 
     EurekaJerseyClient eurekaJerseyClient;
@@ -32,6 +37,10 @@ public abstract class AbstractDiscoveryClientOptionalArgs<T> {
     TransportClientFactories transportClientFactories;
 
     private Set<EurekaEventListener> eventListeners;
+
+    private Optional<SSLContext> sslContext = Optional.empty();
+
+    private Optional<HostnameVerifier> hostnameVerifier = Optional.empty();
 
     @Inject(optional = true)
     public void setEventListeners(Set<EurekaEventListener> listeners) {
@@ -65,6 +74,12 @@ public abstract class AbstractDiscoveryClientOptionalArgs<T> {
         this.healthCheckHandlerProvider = healthCheckHandlerProvider;
     }
 
+    @Inject(optional = true)
+    public void setPreRegistrationHandler(PreRegistrationHandler preRegistrationHandler) {
+        this.preRegistrationHandler = preRegistrationHandler;
+    }
+
+
     @Inject(optional = true) 
     public void setAdditionalFilters(Collection<T> additionalFilters) {
         this.additionalFilters = additionalFilters;
@@ -86,5 +101,23 @@ public abstract class AbstractDiscoveryClientOptionalArgs<T> {
     @Inject(optional = true)
     public void setTransportClientFactories(TransportClientFactories transportClientFactories) {
         this.transportClientFactories = transportClientFactories;
+    }
+    
+    public Optional<SSLContext> getSSLContext() {
+        return sslContext;
+    }
+
+    @Inject(optional = true)
+    public void setSSLContext(SSLContext sslContext) {
+        this.sslContext = Optional.of(sslContext);
+    }
+    
+    public Optional<HostnameVerifier> getHostnameVerifier() {
+        return hostnameVerifier;
+    }
+
+    @Inject(optional = true)
+    public void setHostnameVerifier(HostnameVerifier hostnameVerifier) {
+        this.hostnameVerifier = Optional.of(hostnameVerifier);
     }
 }

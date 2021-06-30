@@ -211,14 +211,16 @@ public abstract class AbstractInstanceConfig implements EurekaInstanceConfig {
         return hostInfo.first();
     }
 
-    private static Pair<String, String> getHostInfo() {
-        Pair<String, String> pair = new Pair<String, String>("", "");
-        try {
-            pair.setFirst(InetAddress.getLocalHost().getHostAddress());
-            pair.setSecond(InetAddress.getLocalHost().getHostName());
+    public boolean shouldBroadcastPublicIpv4Addr () { return false; }
 
+    private static Pair<String, String> getHostInfo() {
+        Pair<String, String> pair;
+        try {
+            InetAddress localHost = InetAddress.getLocalHost();
+            pair = new Pair<String, String>(localHost.getHostAddress(), localHost.getHostName());
         } catch (UnknownHostException e) {
             logger.error("Cannot get host info", e);
+            pair = new Pair<String, String>("", "");
         }
         return pair;
     }

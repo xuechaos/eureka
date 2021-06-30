@@ -7,12 +7,15 @@ import java.util.List;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Injector;
+import com.google.inject.ProvisionException;
 import com.google.inject.Scopes;
 import com.netflix.appinfo.EurekaInstanceConfig;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.appinfo.PropertiesInstanceConfig;
 import com.netflix.discovery.shared.Application;
 import com.netflix.discovery.shared.Applications;
+import com.netflix.discovery.shared.resolver.EndpointRandomizer;
+import com.netflix.discovery.shared.resolver.ResolverUtils;
 import com.netflix.discovery.shared.transport.EurekaHttpClient;
 import com.netflix.discovery.shared.transport.EurekaHttpResponse;
 import com.netflix.discovery.shared.transport.SimpleEurekaHttpServer;
@@ -85,6 +88,7 @@ public class EurekaClientLifecycleTest {
                                 bind(EurekaInstanceConfig.class).to(LocalEurekaInstanceConfig.class);
                                 bind(EurekaClientConfig.class).to(LocalEurekaClientConfig.class);
                                 bind(AbstractDiscoveryClientOptionalArgs.class).to(Jersey1DiscoveryClientOptionalArgs.class).in(Scopes.SINGLETON);
+                                bind(EndpointRandomizer.class).toInstance(ResolverUtils::randomize);
                             }
                         }
                 )
@@ -118,9 +122,10 @@ public class EurekaClientLifecycleTest {
                             @Override
                             protected void configure() {
                                 bind(EurekaInstanceConfig.class).to(LocalEurekaInstanceConfig.class);
-                                bind(EurekaClientConfig.class).to(BadServerEurekaClientConfig.class);
+                                bind(EurekaClientConfig.class).to(BadServerEurekaClientConfig1.class);
                                 bind(BackupRegistry.class).toInstance(backupRegistry);
                                 bind(AbstractDiscoveryClientOptionalArgs.class).to(Jersey1DiscoveryClientOptionalArgs.class).in(Scopes.SINGLETON);
+                                bind(EndpointRandomizer.class).toInstance(ResolverUtils::randomize);
                             }
                         }
                 )
@@ -131,6 +136,32 @@ public class EurekaClientLifecycleTest {
         EurekaClient client = injector.getInstance(EurekaClient.class);
         verify(backupRegistry, atLeast(1)).fetchRegistry();
         assertThat(countInstances(client.getApplications()), is(equalTo(1)));
+    }
+
+    @Test(expected = ProvisionException.class)
+    public void testEnforcingRegistrationOnInitFastFail() {
+        Injector injector = LifecycleInjector.builder()
+                .withModules(
+                        new AbstractModule() {
+                            @Override
+                            protected void configure() {
+                                bind(EurekaInstanceConfig.class).to(LocalEurekaInstanceConfig.class);
+                                bind(EurekaClientConfig.class).to(BadServerEurekaClientConfig2.class);
+                                bind(AbstractDiscoveryClientOptionalArgs.class).to(Jersey1DiscoveryClientOptionalArgs.class).in(Scopes.SINGLETON);
+                                bind(EndpointRandomizer.class).toInstance(ResolverUtils::randomize);
+                            }
+                        }
+                )
+                .build().createInjector();
+        LifecycleManager lifecycleManager = injector.getInstance(LifecycleManager.class);
+        try {
+            lifecycleManager.start();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        // this will throw a Guice ProvisionException for the constructor failure
+        EurekaClient client = injector.getInstance(EurekaClient.class);
     }
 
     private static class LocalEurekaInstanceConfig extends PropertiesInstanceConfig {
@@ -173,15 +204,32 @@ public class EurekaClientLifecycleTest {
         }
     }
 
-    private static class BadServerEurekaClientConfig extends LocalEurekaClientConfig {
+    private static class BadServerEurekaClientConfig1 extends LocalEurekaClientConfig {
         @Override
         public List<String> getEurekaServerServiceUrls(String myZone) {
-            return singletonList("http://localhost:0/v2/"); // Fail fast on bad port number
+            return singletonList("http://localhost:1/v2/"); // Fail fast on bad port number
         }
 
         @Override
         public boolean shouldRegisterWithEureka() {
             return false;
+        }
+    }
+
+    private static class BadServerEurekaClientConfig2 extends LocalEurekaClientConfig {
+        @Override
+        public List<String> getEurekaServerServiceUrls(String myZone) {
+            return singletonList("http://localhost:1/v2/"); // Fail fast on bad port number
+        }
+
+        @Override
+        public boolean shouldFetchRegistry() {
+            return false;
+        }
+
+        @Override
+        public boolean shouldEnforceRegistrationAtInit() {
+            return true;
         }
     }
 }

@@ -45,7 +45,7 @@ public class RefreshableAmazonInfoProvider implements Provider<AmazonInfo> {
                     .newBuilder()
                     .withAmazonInfoConfig(amazonInfoConfig)
                     .autoBuild(amazonInfoConfig.getNamespace());
-            logger.info("Datacenter is: " + DataCenterInfo.Name.Amazon);
+            logger.info("Datacenter is: {}", DataCenterInfo.Name.Amazon);
         } catch (Throwable e) {
             logger.error("Cannot initialize amazon info :", e);
             throw new RuntimeException(e);
@@ -61,7 +61,7 @@ public class RefreshableAmazonInfoProvider implements Provider<AmazonInfo> {
                 // The property to not validate instance ids may be set for
                 // development and in that scenario, populate instance id
                 // and public hostname with the hostname of the machine
-                Map<String, String> metadataMap = new HashMap<String, String>();
+                Map<String, String> metadataMap = new HashMap<>();
                 metadataMap.put(AmazonInfo.MetaDataKey.instanceId.getName(), fallbackAddressProvider.getFallbackIp());
                 metadataMap.put(AmazonInfo.MetaDataKey.publicHostname.getName(), fallbackAddressProvider.getFallbackHostname());
                 info.setMetadata(metadataMap);
@@ -81,10 +81,7 @@ public class RefreshableAmazonInfoProvider implements Provider<AmazonInfo> {
      */
     public synchronized void refresh() {
         try {
-            AmazonInfo newInfo = AmazonInfo.Builder
-                    .newBuilder()
-                    .withAmazonInfoConfig(amazonInfoConfig)
-                    .autoBuild(amazonInfoConfig.getNamespace());
+            AmazonInfo newInfo = getNewAmazonInfo();
 
             if (shouldUpdate(newInfo, info)) {
                 // the datacenter info has changed, re-sync it
@@ -94,6 +91,13 @@ public class RefreshableAmazonInfoProvider implements Provider<AmazonInfo> {
         } catch (Throwable t) {
             logger.error("Cannot refresh the Amazon Info ", t);
         }
+    }
+
+    /* visible for testing */ AmazonInfo getNewAmazonInfo() {
+        return AmazonInfo.Builder
+                        .newBuilder()
+                        .withAmazonInfoConfig(amazonInfoConfig)
+                        .autoBuild(amazonInfoConfig.getNamespace());
     }
 
     /**

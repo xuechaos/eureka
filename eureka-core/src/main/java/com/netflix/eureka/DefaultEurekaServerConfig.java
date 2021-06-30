@@ -16,8 +16,6 @@
 
 package com.netflix.eureka;
 
-import javax.annotation.Nullable;
-import javax.inject.Singleton;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
@@ -26,6 +24,9 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import javax.annotation.Nullable;
+import javax.inject.Singleton;
+
 import com.netflix.config.ConfigurationManager;
 import com.netflix.config.DynamicBooleanProperty;
 import com.netflix.config.DynamicIntProperty;
@@ -33,6 +34,7 @@ import com.netflix.config.DynamicPropertyFactory;
 import com.netflix.config.DynamicStringProperty;
 import com.netflix.config.DynamicStringSetProperty;
 import com.netflix.eureka.aws.AwsBindingStrategy;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,6 +89,8 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
 
     private final DynamicStringProperty listAutoScalingGroupsRoleName =
             configInstance.getStringProperty(namespace + "listAutoScalingGroupsRoleName", "ListAutoScalingGroups");
+
+    private final DynamicStringProperty myUrl = configInstance.getStringProperty(namespace + "myUrl", null);
 
     public DefaultEurekaServerConfig() {
         init();
@@ -217,6 +221,20 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
                 (15 * 60 * 1000)).get();
     }
 
+    /*
+     * (non-Javadoc)
+     *
+     * @see
+     * com.netflix.eureka.EurekaServerConfig#getExpectedClientRenewalIntervalSeconds()
+     */
+    @Override
+    public int getExpectedClientRenewalIntervalSeconds() {
+        final int configured = configInstance.getIntProperty(
+                namespace + "expectedClientRenewalIntervalSeconds",
+                30).get();
+        return configured > 0 ? configured : 30;
+    }
+
     @Override
     public double getRenewalPercentThreshold() {
         return configInstance.getDoubleProperty(
@@ -251,13 +269,13 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
     @Override
     public int getPeerNodeConnectTimeoutMs() {
         return configInstance.getIntProperty(
-                namespace + "peerNodeConnectTimeoutMs", 200).get();
+                namespace + "peerNodeConnectTimeoutMs", 1000).get();
     }
 
     @Override
     public int getPeerNodeReadTimeoutMs() {
         return configInstance.getIntProperty(
-                namespace + "peerNodeReadTimeoutMs", 200).get();
+                namespace + "peerNodeReadTimeoutMs", 5000).get();
     }
 
     @Override
@@ -296,6 +314,11 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
     public long getEvictionIntervalTimerInMs() {
         return configInstance.getLongProperty(
                 namespace + "evictionIntervalTimerInMs", (60 * 1000)).get();
+    }
+
+    @Override
+    public boolean shouldUseAwsAsgApi() {
+        return configInstance.getBooleanProperty(namespace + "shouldUseAwsAsgApi", true).get();
     }
 
     @Override
@@ -431,13 +454,13 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
     @Override
     public int getRemoteRegionConnectTimeoutMs() {
         return configInstance.getIntProperty(
-                namespace + "remoteRegionConnectTimeoutMs", 1000).get();
+                namespace + "remoteRegionConnectTimeoutMs", 2000).get();
     }
 
     @Override
     public int getRemoteRegionReadTimeoutMs() {
         return configInstance.getIntProperty(
-                namespace + "remoteRegionReadTimeoutMs", 1000).get();
+                namespace + "remoteRegionReadTimeoutMs", 5000).get();
     }
 
     @Override
@@ -498,7 +521,7 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
                 logger.error("Error reading eureka remote region urls from property {}. "
                                 + "Invalid entry {} for remote region url. The entry must contain region name and url "
                                 + "separated by a {}. Ignoring this entry.",
-                        new String[]{propName, remoteRegionUrlWithNamePair, pairSplitChar});
+                        propName, remoteRegionUrlWithNamePair, pairSplitChar);
             } else {
                 String regionName = pairSplit[0];
                 String regionUrl = pairSplit[1];
@@ -584,6 +607,11 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
     @Override
     public boolean shouldBatchReplication() {
         return configInstance.getBooleanProperty(namespace + "shouldBatchReplication", false).get();
+    }
+
+    @Override
+    public String getMyUrl() {
+        return myUrl.get();
     }
 
     @Override
@@ -673,5 +701,10 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
     public int getHealthStatusMinNumberOfAvailablePeers() {
         return configInstance.getIntProperty(
                 namespace + "minAvailableInstancesForPeerReplication", -1).get();
+    }
+
+    @Override
+    public int getInitialCapacityOfResponseCache() {
+        return configInstance.getIntProperty(namespace + "initialCapacityOfResponseCache", 1000).get();
     }
 }

@@ -128,7 +128,7 @@ public class ResponseCacheImpl implements ResponseCache {
 
         long responseCacheUpdateIntervalMs = serverConfig.getResponseCacheUpdateIntervalMs();
         this.readWriteCacheMap =
-                CacheBuilder.newBuilder().initialCapacity(1000)
+                CacheBuilder.newBuilder().initialCapacity(serverConfig.getInitialCapacityOfResponseCache())
                         .expireAfterWrite(serverConfig.getResponseCacheAutoExpirationInSeconds(), TimeUnit.SECONDS)
                         .removalListener(new RemovalListener<Key, Value>() {
                             @Override
@@ -173,8 +173,8 @@ public class ResponseCacheImpl implements ResponseCache {
                 logger.debug("Updating the client cache from response cache");
                 for (Key key : readOnlyCacheMap.keySet()) {
                     if (logger.isDebugEnabled()) {
-                        Object[] args = {key.getEntityType(), key.getName(), key.getVersion(), key.getType()};
-                        logger.debug("Updating the client cache from response cache for key : {} {} {} {}", args);
+                        logger.debug("Updating the client cache from response cache for key : {} {} {} {}",
+                                key.getEntityType(), key.getName(), key.getVersion(), key.getType());
                     }
                     try {
                         CurrentRequestVersion.set(key.getVersion());
@@ -184,7 +184,9 @@ public class ResponseCacheImpl implements ResponseCache {
                             readOnlyCacheMap.put(key, cacheValue);
                         }
                     } catch (Throwable th) {
-                        logger.error("Error while updating the client cache from response cache", th);
+                        logger.error("Error while updating the client cache from response cache for key {}", key.toStringCompact(), th);
+                    } finally {
+                        CurrentRequestVersion.remove();
                     }
                 }
             }
@@ -232,6 +234,12 @@ public class ResponseCacheImpl implements ResponseCache {
             return null;
         }
         return payload.getGzipped();
+    }
+
+    @Override
+    public void stop() {
+        timer.cancel();
+        Monitors.unregisterObject(this);
     }
 
     /**
@@ -356,7 +364,7 @@ public class ResponseCacheImpl implements ResponseCache {
                 payload = readWriteCacheMap.get(key);
             }
         } catch (Throwable t) {
-            logger.error("Cannot get value for key :" + key, t);
+            logger.error("Cannot get value for key : {}", key, t);
         }
         return payload;
     }
@@ -439,7 +447,7 @@ public class ResponseCacheImpl implements ResponseCache {
                     payload = getPayLoad(key, getApplicationsForVip(key, registry));
                     break;
                 default:
-                    logger.error("Unidentified entity type: " + key.getEntityType() + " found in the cache key.");
+                    logger.error("Unidentified entity type: {} found in the cache key.", key.getEntityType());
                     payload = "";
                     break;
             }
@@ -452,10 +460,9 @@ public class ResponseCacheImpl implements ResponseCache {
     }
 
     private static Applications getApplicationsForVip(Key key, AbstractInstanceRegistry registry) {
-        Object[] args = {key.getEntityType(), key.getName(), key.getVersion(), key.getType()};
         logger.debug(
                 "Retrieving applications from registry for key : {} {} {} {}",
-                args);
+                key.getEntityType(), key.getName(), key.getVersion(), key.getType());
         Applications toReturn = new Applications();
         Applications applications = registry.getApplications();
         for (Application application : applications.getRegisteredApplications()) {
@@ -485,11 +492,10 @@ public class ResponseCacheImpl implements ResponseCache {
             }
         }
         toReturn.setAppsHashCode(toReturn.getReconcileHashCode());
-        args = new Object[]{key.getEntityType(), key.getName(), key.getVersion(), key.getType(),
-                toReturn.getReconcileHashCode()};
         logger.debug(
                 "Retrieved applications from registry for key : {} {} {} {}, reconcile hashcode: {}",
-                args);
+                key.getEntityType(), key.getName(), key.getVersion(), key.getType(),
+                toReturn.getReconcileHashCode());
         return toReturn;
     }
 

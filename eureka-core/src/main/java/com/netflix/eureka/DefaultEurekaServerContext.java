@@ -17,9 +17,12 @@
 package com.netflix.eureka;
 
 import com.netflix.appinfo.ApplicationInfoManager;
+import com.netflix.discovery.DiscoveryManager;
 import com.netflix.eureka.cluster.PeerEurekaNodes;
 import com.netflix.eureka.registry.PeerAwareInstanceRegistry;
 import com.netflix.eureka.resources.ServerCodecs;
+import com.netflix.eureka.util.EurekaMonitors;
+import com.netflix.eureka.util.ServoControl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,19 +62,25 @@ public class DefaultEurekaServerContext implements EurekaServerContext {
 
     @PostConstruct
     @Override
-    public void initialize() throws Exception {
+    public void initialize() {
         logger.info("Initializing ...");
         peerEurekaNodes.start();
-        registry.init(peerEurekaNodes);
+        try {
+            registry.init(peerEurekaNodes);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         logger.info("Initialized");
     }
 
     @PreDestroy
     @Override
-    public void shutdown() throws Exception {
+    public void shutdown() {
         logger.info("Shutting down ...");
         registry.shutdown();
         peerEurekaNodes.shutdown();
+        ServoControl.shutdown();
+        EurekaMonitors.shutdown();
         logger.info("Shut down");
     }
 

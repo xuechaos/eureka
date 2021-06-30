@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -55,6 +56,8 @@ import org.slf4j.LoggerFactory;
 @XStreamAlias("instance")
 @JsonRootName("instance")
 public class InstanceInfo {
+
+    private static final String VERSION_UNKNOWN = "unknown";
 
     /**
      * {@link InstanceInfo} JSON and XML format for port information does not follow the usual conventions, which
@@ -134,25 +137,28 @@ public class InstanceInfo {
     private volatile DataCenterInfo dataCenterInfo;
     private volatile String hostName;
     private volatile InstanceStatus status = InstanceStatus.UP;
-    private volatile InstanceStatus overriddenstatus = InstanceStatus.UNKNOWN;
+    private volatile InstanceStatus overriddenStatus = InstanceStatus.UNKNOWN;
     @XStreamOmitField
     private volatile boolean isInstanceInfoDirty = false;
     private volatile LeaseInfo leaseInfo;
     @Auto
     private volatile Boolean isCoordinatingDiscoveryServer = Boolean.FALSE;
     @XStreamAlias("metadata")
-    private volatile Map<String, String> metadata = new ConcurrentHashMap<String, String>();
+    private volatile Map<String, String> metadata;
     @Auto
-    private volatile Long lastUpdatedTimestamp = System.currentTimeMillis();
+    private volatile Long lastUpdatedTimestamp;
     @Auto
-    private volatile Long lastDirtyTimestamp = System.currentTimeMillis();
+    private volatile Long lastDirtyTimestamp;
     @Auto
     private volatile ActionType actionType;
     @Auto
     private volatile String asgName;
-    private String version = "unknown";
+    private String version = VERSION_UNKNOWN;
 
     private InstanceInfo() {
+        this.metadata = new ConcurrentHashMap<String, String>();
+        this.lastUpdatedTimestamp = System.currentTimeMillis();
+        this.lastDirtyTimestamp = lastUpdatedTimestamp;
     }
 
     @JsonCreator
@@ -174,7 +180,8 @@ public class InstanceInfo {
             @JsonProperty("dataCenterInfo") DataCenterInfo dataCenterInfo,
             @JsonProperty("hostName") String hostName,
             @JsonProperty("status") InstanceStatus status,
-            @JsonProperty("overriddenstatus") InstanceStatus overriddenstatus,
+            @JsonProperty("overriddenstatus") InstanceStatus overriddenStatus,
+            @JsonProperty("overriddenStatus") InstanceStatus overriddenStatusAlt,
             @JsonProperty("leaseInfo") LeaseInfo leaseInfo,
             @JsonProperty("isCoordinatingDiscoveryServer") Boolean isCoordinatingDiscoveryServer,
             @JsonProperty("metadata") HashMap<String, String> metadata,
@@ -201,7 +208,7 @@ public class InstanceInfo {
         this.dataCenterInfo = dataCenterInfo;
         this.hostName = hostName;
         this.status = status;
-        this.overriddenstatus = overriddenstatus;
+        this.overriddenStatus = overriddenStatus == null ? overriddenStatusAlt : overriddenStatus;
         this.leaseInfo = leaseInfo;
         this.isCoordinatingDiscoveryServer = isCoordinatingDiscoveryServer;
         this.lastUpdatedTimestamp = lastUpdatedTimestamp;
@@ -223,6 +230,14 @@ public class InstanceInfo {
         if (sid == null) {
             this.sid = SID_DEFAULT;
         }
+    }
+
+    @Override
+    public String toString(){
+        return "InstanceInfo [instanceId = " + this.instanceId + ", appName = " + this.appName +
+                ", hostName = " + this.hostName + ", status = " + this.status +
+                ", ipAddr = " + this.ipAddr + ", port = " + this.port + ", securePort = " + this.securePort +
+                ", dataCenterInfo = " + this.dataCenterInfo;
     }
 
     private Map<String, String> removeMetadataMapLegacyValues(Map<String, String> metadata) {
@@ -278,7 +293,7 @@ public class InstanceInfo {
         this.hostName = ii.hostName;
 
         this.status = ii.status;
-        this.overriddenstatus = ii.overriddenstatus;
+        this.overriddenStatus = ii.overriddenStatus;
 
         this.isInstanceInfoDirty = ii.isInstanceInfoDirty;
 
@@ -308,9 +323,12 @@ public class InstanceInfo {
         UNKNOWN;
 
         public static InstanceStatus toEnum(String s) {
-            for (InstanceStatus e : InstanceStatus.values()) {
-                if (e.name().equalsIgnoreCase(s)) {
-                    return e;
+            if (s != null) {
+                try {
+                    return InstanceStatus.valueOf(s.toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    // ignore and fall through to unknown
+                    logger.debug("illegal argument supplied to InstanceStatus.valueOf: {}, defaulting to {}", s, UNKNOWN);
                 }
             }
             return UNKNOWN;
@@ -319,10 +337,8 @@ public class InstanceInfo {
 
     @Override
     public int hashCode() {
-        final int prime = 31;
-        int result = 1;
-        result = prime * result + ((getId() == null) ? 0 : getId().hashCode());
-        return result;
+        String id = getId();
+        return (id == null) ? 31 : (id.hashCode() + 31);
     }
 
     @Override
@@ -337,11 +353,12 @@ public class InstanceInfo {
             return false;
         }
         InstanceInfo other = (InstanceInfo) obj;
-        if (getId() == null) {
+        String id = getId();
+        if (id == null) {
             if (other.getId() != null) {
                 return false;
             }
-        } else if (!getId().equals(other.getId())) {
+        } else if (!id.equals(other.getId())) {
             return false;
         }
         return true;
@@ -355,6 +372,7 @@ public class InstanceInfo {
         private static final String COLON = ":";
         private static final String HTTPS_PROTOCOL = "https://";
         private static final String HTTP_PROTOCOL = "http://";
+        private final Function<String,String> intern;
 
         private static final class LazyHolder {
             private static final VipAddressResolver DEFAULT_VIP_ADDRESS_RESOLVER = new Archaius1VipAddressResolver();
@@ -368,21 +386,26 @@ public class InstanceInfo {
 
         private String namespace;
 
-        private Builder(InstanceInfo result, VipAddressResolver vipAddressResolver) {
+        private Builder(InstanceInfo result, VipAddressResolver vipAddressResolver, Function<String,String> intern) {
             this.vipAddressResolver = vipAddressResolver;
             this.result = result;
+            this.intern = intern != null ? intern : StringCache::intern;
         }
 
         public Builder(InstanceInfo instanceInfo) {
-            this(instanceInfo, LazyHolder.DEFAULT_VIP_ADDRESS_RESOLVER);
+            this(instanceInfo, LazyHolder.DEFAULT_VIP_ADDRESS_RESOLVER, null);
         }
 
         public static Builder newBuilder() {
-            return new Builder(new InstanceInfo(), LazyHolder.DEFAULT_VIP_ADDRESS_RESOLVER);
+            return new Builder(new InstanceInfo(), LazyHolder.DEFAULT_VIP_ADDRESS_RESOLVER, null);
+        }
+
+        public static Builder newBuilder(Function<String,String> intern) {
+            return new Builder(new InstanceInfo(), LazyHolder.DEFAULT_VIP_ADDRESS_RESOLVER, intern);
         }
 
         public static Builder newBuilder(VipAddressResolver vipAddressResolver) {
-            return new Builder(new InstanceInfo(), vipAddressResolver);
+            return new Builder(new InstanceInfo(), vipAddressResolver, null);
         }
 
         public Builder setInstanceId(String instanceId) {
@@ -398,16 +421,26 @@ public class InstanceInfo {
          * @return the instance info builder.
          */
         public Builder setAppName(String appName) {
-            result.appName = StringCache.intern(appName.toUpperCase(Locale.ROOT));
+            result.appName = intern.apply(appName.toUpperCase(Locale.ROOT));
             return this;
         }
+        
+        public Builder setAppNameForDeser(String appName) {
+            result.appName = appName;
+            return this;
+        }
+        
 
         public Builder setAppGroupName(String appGroupName) {
             if (appGroupName != null) {
-                result.appGroupName = appGroupName.toUpperCase(Locale.ROOT);
+                result.appGroupName = intern.apply(appGroupName.toUpperCase(Locale.ROOT));
             } else {
                 result.appGroupName = null;
             }
+            return this;
+        }
+        public Builder setAppGroupNameForDeser(String appGroupName) {
+            result.appGroupName = appGroupName;
             return this;
         }
 
@@ -456,7 +489,7 @@ public class InstanceInfo {
          * @return @return the {@link InstanceInfo} builder.
          */
         public Builder setOverriddenStatus(InstanceStatus status) {
-            result.overriddenstatus = status;
+            result.overriddenStatus = status;
             return this;
         }
 
@@ -636,7 +669,7 @@ public class InstanceInfo {
             if (explicitUrl != null) {
                 result.healthCheckUrl = explicitUrl.replace(
                         hostNameInterpolationExpression, result.hostName);
-            } else if (result.isUnsecurePortEnabled) {
+            } else if (result.isUnsecurePortEnabled && relativeUrl != null) {
                 result.healthCheckUrl = HTTP_PROTOCOL + result.hostName + COLON
                         + result.port + relativeUrl;
             }
@@ -644,7 +677,7 @@ public class InstanceInfo {
             if (secureExplicitUrl != null) {
                 result.secureHealthCheckUrl = secureExplicitUrl.replace(
                         hostNameInterpolationExpression, result.hostName);
-            } else if (result.isSecurePortEnabled) {
+            } else if (result.isSecurePortEnabled && relativeUrl != null) {
                 result.secureHealthCheckUrl = HTTPS_PROTOCOL + result.hostName
                         + COLON + result.securePort + relativeUrl;
             }
@@ -675,8 +708,8 @@ public class InstanceInfo {
          * @return the instance builder.
          */
         public Builder setVIPAddress(final String vipAddress) {
-            result.vipAddressUnresolved = StringCache.intern(vipAddress);
-            result.vipAddress = StringCache.intern(
+            result.vipAddressUnresolved = intern.apply(vipAddress);
+            result.vipAddress = intern.apply(
                     vipAddressResolver.resolveDeploymentContextBasedVipAddresses(vipAddress));
             return this;
         }
@@ -685,7 +718,7 @@ public class InstanceInfo {
          * Setter used during deserialization process, that does not do macro expansion on the provided value.
          */
         public Builder setVIPAddressDeser(String vipAddress) {
-            result.vipAddress = StringCache.intern(vipAddress);
+            result.vipAddress = intern.apply(vipAddress);
             return this;
         }
 
@@ -699,8 +732,8 @@ public class InstanceInfo {
          * @return - Builder instance
          */
         public Builder setSecureVIPAddress(final String secureVIPAddress) {
-            result.secureVipAddressUnresolved = StringCache.intern(secureVIPAddress);
-            result.secureVipAddress = StringCache.intern(
+            result.secureVipAddressUnresolved = intern.apply(secureVIPAddress);
+            result.secureVipAddress = intern.apply(
                     vipAddressResolver.resolveDeploymentContextBasedVipAddresses(secureVIPAddress));
             return this;
         }
@@ -709,7 +742,7 @@ public class InstanceInfo {
          * Setter used during deserialization process, that does not do macro expansion on the provided value.
          */
         public Builder setSecureVIPAddressDeser(String secureVIPAddress) {
-            result.secureVipAddress = StringCache.intern(secureVIPAddress);
+            result.secureVipAddress = intern.apply(secureVIPAddress);
             return this;
         }
 
@@ -791,7 +824,7 @@ public class InstanceInfo {
          * @return the instance info builder.
          */
         public Builder setASGName(String asgName) {
-            result.asgName = StringCache.intern(asgName);
+            result.asgName = intern.apply(asgName);
             return this;
         }
 
@@ -954,7 +987,7 @@ public class InstanceInfo {
      * status.
      */
     public InstanceStatus getOverriddenStatus() {
-        return overriddenstatus;
+        return overriddenStatus;
     }
 
     /**
@@ -1069,7 +1102,7 @@ public class InstanceInfo {
      */
     @JsonIgnore
     public Set<String> getHealthCheckUrls() {
-        Set<String> healthCheckUrlSet = new LinkedHashSet<String>();
+        Set<String> healthCheckUrlSet = new LinkedHashSet<>();
         if (this.isUnsecurePortEnabled && healthCheckUrl != null && !healthCheckUrl.isEmpty()) {
             healthCheckUrlSet.add(healthCheckUrl);
         }
@@ -1160,8 +1193,8 @@ public class InstanceInfo {
      * @param status overridden status for this instance.
      */
     public synchronized void setOverriddenStatus(InstanceStatus status) {
-        if (this.overriddenstatus != status) {
-            this.overriddenstatus = status;
+        if (this.overriddenStatus != status) {
+            this.overriddenStatus = status;
         }
     }
 
@@ -1211,6 +1244,16 @@ public class InstanceInfo {
     public synchronized void setIsDirty() {
         isInstanceInfoDirty = true;
         lastDirtyTimestamp = System.currentTimeMillis();
+    }
+
+    /**
+     * Set the dirty flag, and also return the timestamp of the isDirty event
+     *
+     * @return the timestamp when the isDirty flag is set
+     */
+    public synchronized long setIsDirtyWithTime() {
+        setIsDirty();
+        return lastDirtyTimestamp;
     }
 
 

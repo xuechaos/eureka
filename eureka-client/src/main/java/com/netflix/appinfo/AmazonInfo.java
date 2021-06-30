@@ -48,10 +48,8 @@ import org.slf4j.LoggerFactory;
  * @author Karthik Ranganathan, Greg Kim
  *
  */
-@JsonDeserialize(builder = StringInterningAmazonInfoBuilder.class)
+@JsonDeserialize(using = StringInterningAmazonInfoBuilder.class)
 public class AmazonInfo implements DataCenterInfo, UniqueIdentifier {
-
-    private Map<String, String> metadata = new HashMap<String, String>();
 
     private static final String AWS_API_VERSION = "latest";
     private static final String AWS_METADATA_URL = "http://169.254.169.254/" + AWS_API_VERSION + "/meta-data/";
@@ -65,6 +63,9 @@ public class AmazonInfo implements DataCenterInfo, UniqueIdentifier {
         availabilityZone("availability-zone", "placement/"),
         publicHostname("public-hostname"),
         publicIpv4("public-ipv4"),
+        ipv6("ipv6"),
+        spotTerminationTime("termination-time", "spot/"),
+        spotInstanceAction("instance-action", "spot/"),
         mac("mac"),  // mac is declared above vpcId so will be found before vpcId (where it is needed)
         vpcId("vpc-id", "network/interfaces/macs/") {
             @Override
@@ -212,7 +213,7 @@ public class AmazonInfo implements DataCenterInfo, UniqueIdentifier {
                         break;
                     } catch (Throwable e) {
                         if (config.shouldLogAmazonMetadataErrors()) {
-                            logger.warn("Cannot get the value for the metadata key :" + key + " Reason :", e);
+                            logger.warn("Cannot get the value for the metadata key: {} Reason :", key, e);
                         }
                         if (numOfRetries >= 0) {
                             try {
@@ -239,7 +240,10 @@ public class AmazonInfo implements DataCenterInfo, UniqueIdentifier {
         }
     }
 
+    private Map<String, String> metadata;
+
     public AmazonInfo() {
+        this.metadata = new HashMap<String, String>();
     }
 
     /**
@@ -254,6 +258,12 @@ public class AmazonInfo implements DataCenterInfo, UniqueIdentifier {
             @JsonProperty("metadata") HashMap<String, String> metadata) {
         this.metadata = metadata;
     }
+    
+    public AmazonInfo(
+            @JsonProperty("name") String name,
+            @JsonProperty("metadata") Map<String, String> metadata) {
+        this.metadata = metadata;
+    }    
 
     @Override
     public Name getName() {

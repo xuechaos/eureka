@@ -1,5 +1,6 @@
 package com.netflix.discovery.shared.transport.jersey;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
@@ -22,7 +23,6 @@ import org.apache.http.conn.scheme.Scheme;
 import org.apache.http.conn.scheme.SchemeRegistry;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.conn.ssl.SSLSocketFactory;
-import org.apache.http.conn.ssl.X509HostnameVerifier;
 import org.apache.http.impl.conn.SchemeRegistryFactory;
 import org.apache.http.params.CoreProtocolPNames;
 import org.apache.http.params.HttpConnectionParams;
@@ -73,6 +73,12 @@ public class EurekaJerseyClientImpl implements EurekaJerseyClient {
     public void destroyResources() {
         apacheHttpClientConnectionCleaner.shutdown();
         apacheHttpClient.destroy();
+
+        final Object connectionManager =
+                jerseyClientConfig.getProperty(ApacheHttpClient4Config.PROPERTY_CONNECTION_MANAGER);
+        if (connectionManager instanceof MonitoredConnectionManager) {
+            ((MonitoredConnectionManager) connectionManager).shutdown();
+        }
     }
 
     public static class EurekaJerseyClientBuilder {
@@ -93,6 +99,8 @@ public class EurekaJerseyClientImpl implements EurekaJerseyClient {
         private int connectionIdleTimeout;
         private EncoderWrapper encoderWrapper;
         private DecoderWrapper decoderWrapper;
+        private SSLContext sslContext;
+        private HostnameVerifier hostnameVerifier;
 
         public EurekaJerseyClientBuilder withClientName(String clientName) {
             this.clientName = clientName;
@@ -165,6 +173,11 @@ public class EurekaJerseyClientImpl implements EurekaJerseyClient {
             this.decoderWrapper = decoderWrapper;
             return this;
         }
+        
+        public EurekaJerseyClientBuilder withCustomSSL(SSLContext sslContext) {
+            this.sslContext = sslContext;
+            return this;
+        }
 
         public EurekaJerseyClient build() {
             MyDefaultApacheHttpClient4Config config = new MyDefaultApacheHttpClient4Config();
@@ -181,7 +194,7 @@ public class EurekaJerseyClientImpl implements EurekaJerseyClient {
 
                 if (systemSSL) {
                     cm = createSystemSslCM();
-                } else if (trustStoreFileName != null) {
+                } else if (sslContext != null || hostnameVerifier != null || trustStoreFileName != null) {
                     cm = createCustomSslCM();
                 } else {
                     cm = createDefaultSslCM();
@@ -234,19 +247,25 @@ public class EurekaJerseyClientImpl implements EurekaJerseyClient {
             private MonitoredConnectionManager createCustomSslCM() {
                 FileInputStream fin = null;
                 try {
-                    SSLContext sslContext = SSLContext.getInstance(PROTOCOL_SCHEME);
-                    KeyStore sslKeyStore = KeyStore.getInstance(KEYSTORE_TYPE);
+                    if (sslContext == null) {
+                        sslContext = SSLContext.getInstance(PROTOCOL_SCHEME);
+                        KeyStore sslKeyStore = KeyStore.getInstance(KEYSTORE_TYPE);
 
-                    fin = new FileInputStream(trustStoreFileName);
-                    sslKeyStore.load(fin, trustStorePassword.toCharArray());
+                        fin = new FileInputStream(trustStoreFileName);
+                        sslKeyStore.load(fin, trustStorePassword.toCharArray());
 
-                    TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                    factory.init(sslKeyStore);
+                        TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                        factory.init(sslKeyStore);
 
-                    TrustManager[] trustManagers = factory.getTrustManagers();
+                        TrustManager[] trustManagers = factory.getTrustManagers();
 
-                    sslContext.init(null, trustManagers, null);
-                    X509HostnameVerifier hostnameVerifier = SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER;
+                        sslContext.init(null, trustManagers, null);
+                    }
+                    
+                    if (hostnameVerifier == null) {
+                        hostnameVerifier = SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER;
+                    }
+                    
                     SSLConnectionSocketFactory customSslSocketFactory = new SSLConnectionSocketFactory(sslContext, hostnameVerifier);
                     SSLSocketFactory sslSocketFactory = new SSLSocketFactoryAdapter(customSslSocketFactory);
                     SchemeRegistry sslSchemeRegistry = new SchemeRegistry();
@@ -274,8 +293,16 @@ public class EurekaJerseyClientImpl implements EurekaJerseyClient {
                         new Scheme("http", 80, PlainSocketFactory.getSocketFactory()));
                 registry.register(
                         new Scheme("https", 443, new SSLSocketFactoryAdapter(SSLConnectionSocketFactory.getSocketFactory())));
+                
                 return new MonitoredConnectionManager(clientName, registry);
             }
+        }
+
+        /**
+         * @param hostnameVerifier
+         */
+        public void withHostnameVerifier(HostnameVerifier hostnameVerifier) {
+            this.hostnameVerifier = hostnameVerifier;
         }
     }
 }

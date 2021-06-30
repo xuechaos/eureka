@@ -6,6 +6,7 @@ import com.netflix.discovery.util.RateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -68,27 +69,43 @@ class InstanceInfoReplicator implements Runnable {
     }
 
     public void stop() {
-        scheduler.shutdownNow();
+        shutdownAndAwaitTermination(scheduler);
         started.set(false);
+    }
+
+    private void shutdownAndAwaitTermination(ExecutorService pool) {
+        pool.shutdown();
+        try {
+            if (!pool.awaitTermination(3, TimeUnit.SECONDS)) {
+                pool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            logger.warn("InstanceInfoReplicator stop interrupted");
+        }
     }
 
     public boolean onDemandUpdate() {
         if (rateLimiter.acquire(burstSize, allowedRatePerMinute)) {
-            scheduler.submit(new Runnable() {
-                @Override
-                public void run() {
-                    logger.debug("Executing on-demand update of local InstanceInfo");
-
-                    Future latestPeriodic = scheduledPeriodicRef.get();
-                    if (latestPeriodic != null && !latestPeriodic.isDone()) {
-                        logger.debug("Canceling the latest scheduled update, it will be rescheduled at the end of on demand update");
-                        latestPeriodic.cancel(false);
+            if (!scheduler.isShutdown()) {
+                scheduler.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        logger.debug("Executing on-demand update of local InstanceInfo");
+    
+                        Future latestPeriodic = scheduledPeriodicRef.get();
+                        if (latestPeriodic != null && !latestPeriodic.isDone()) {
+                            logger.debug("Canceling the latest scheduled update, it will be rescheduled at the end of on demand update");
+                            latestPeriodic.cancel(false);
+                        }
+    
+                        InstanceInfoReplicator.this.run();
                     }
-
-                    InstanceInfoReplicator.this.run();
-                }
-            });
-            return true;
+                });
+                return true;
+            } else {
+                logger.warn("Ignoring onDemand update due to stopped scheduler");
+                return false;
+            }
         } else {
             logger.warn("Ignoring onDemand update due to rate limiter");
             return false;

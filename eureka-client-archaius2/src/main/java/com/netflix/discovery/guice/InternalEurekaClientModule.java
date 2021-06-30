@@ -20,6 +20,8 @@ import com.netflix.discovery.DiscoveryClient;
 import com.netflix.discovery.EurekaArchaius2ClientConfig;
 import com.netflix.discovery.EurekaClient;
 import com.netflix.discovery.EurekaClientConfig;
+import com.netflix.discovery.shared.resolver.EndpointRandomizer;
+import com.netflix.discovery.shared.resolver.ResolverUtils;
 import com.netflix.discovery.shared.transport.EurekaArchaius2TransportConfig;
 import com.netflix.discovery.shared.transport.EurekaTransportConfig;
 import com.netflix.discovery.shared.transport.jersey.Jersey1DiscoveryClientOptionalArgs;
@@ -29,20 +31,17 @@ import javax.inject.Singleton;
 
 final class InternalEurekaClientModule extends AbstractModule {
 
-    static final String INSTANCE_CONFIG_NAMESPACE_KEY = "eureka.instance.config.namespace";
-    static final String CLIENT_CONFIG_NAMESPACE_KEY = "eureka.client.config.namespace";
-
     @Singleton
     static class ModuleConfig {
         @Inject
         Config config;
 
         @Inject(optional = true)
-        @Named(InternalEurekaClientModule.INSTANCE_CONFIG_NAMESPACE_KEY)
+        @Named(CommonConstants.INSTANCE_CONFIG_NAMESPACE_KEY)
         String instanceConfigNamespace;
 
         @Inject(optional = true)
-        @Named(InternalEurekaClientModule.CLIENT_CONFIG_NAMESPACE_KEY)
+        @Named(CommonConstants.CLIENT_CONFIG_NAMESPACE_KEY)
         String clientConfigNamespace;
 
         @Inject(optional = true)
@@ -73,6 +72,7 @@ final class InternalEurekaClientModule extends AbstractModule {
         bind(VipAddressResolver.class).to(Archaius2VipAddressResolver.class);
         bind(InstanceInfo.class).toProvider(EurekaConfigBasedInstanceInfoProvider.class);
         bind(EurekaClient.class).to(DiscoveryClient.class);
+        bind(EndpointRandomizer.class).toInstance(ResolverUtils::randomize);
 
 
         // Default to the jersey1 discovery client optional args

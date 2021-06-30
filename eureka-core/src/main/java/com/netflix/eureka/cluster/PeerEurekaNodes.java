@@ -18,7 +18,6 @@ import com.netflix.appinfo.ApplicationInfoManager;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.discovery.EurekaClientConfig;
 import com.netflix.discovery.endpoint.EndpointUtils;
-import com.netflix.discovery.shared.Application;
 import com.netflix.eureka.EurekaServerConfig;
 import com.netflix.eureka.registry.PeerAwareInstanceRegistry;
 import com.netflix.eureka.resources.ServerCodecs;
@@ -107,7 +106,7 @@ public class PeerEurekaNodes {
             throw new IllegalStateException(e);
         }
         for (PeerEurekaNode node : peerEurekaNodes) {
-            logger.info("Replica node URL:  " + node.getServiceUrl());
+            logger.info("Replica node URL:  {}", node.getServiceUrl());
         }
     }
 
@@ -233,6 +232,10 @@ public class PeerEurekaNodes {
      *         replicate, false otherwise.
      */
     public boolean isThisMyUrl(String url) {
+        final String myUrlConfigured = serverConfig.getMyUrl();
+        if (myUrlConfigured != null) {
+            return myUrlConfigured.equals(url);
+        }
         return isInstanceURL(url, applicationInfoManager.getInfo());
     }
     
@@ -257,7 +260,7 @@ public class PeerEurekaNodes {
         try {
             uri = new URI(url);
         } catch (URISyntaxException e) {
-            logger.warn("Cannot parse service URI " + url, e);
+            logger.warn("Cannot parse service URI {}", url, e);
             return null;
         }
         return uri.getHost();

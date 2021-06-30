@@ -1,6 +1,6 @@
 Eureka
 =====
-[![Build Status](https://netflixoss.ci.cloudbees.com/job/NetflixOSS/job/eureka/job/eureka-snapshot/badge/icon)](https://netflixoss.ci.cloudbees.com/job/NetflixOSS/job/eureka/job/eureka-snapshot/)
+[![Build Status](https://travis-ci.com/Netflix/eureka.svg?branch=master)](https://travis-ci.com/Netflix/eureka)
 
 Eureka is a REST (Representational State Transfer) based service that is primarily used in the AWS cloud for locating services for the purpose of load balancing and failover of middle-tier servers.
 
@@ -20,14 +20,15 @@ At Netflix, Eureka is used for the following purposes apart from playing a criti
 
 Building
 ----------
-The build requires java8 because of some required libraries that are java8 (servo), but the source and target compatibility are still set to 1.7.
+The build requires `java8` because of some required libraries that are `java8` (`servo`), but the source and target compatibility are still set to `1.7`.
+Note that tags should be checked out to perform a build.
 
 
 Support
 ----------
-[Eureka Google Group] (https://groups.google.com/forum/?fromgroups#!forum/eureka_netflix)
+[Eureka Google Group](https://groups.google.com/forum/?fromgroups#!forum/eureka_netflix)
 
 
 Documentation
 --------------
-Please see [wiki] (https://github.com/Netflix/eureka/wiki) for detailed documentation.
+Please see [wiki](https://github.com/Netflix/eureka/wiki) for detailed documentation.
